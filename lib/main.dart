@@ -248,19 +248,63 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-class SetupScreen extends StatelessWidget {
+class SetupScreen extends StatefulWidget {
   const SetupScreen({super.key});
+
+  @override
+  State<SetupScreen> createState() => _SetupScreenState();
+}
+
+class _SetupScreenState extends State<SetupScreen> {
+  final TextEditingController _nameController = TextEditingController();
+  final List<String> _personalityOptions = [
+    'Friendly', 'Funny', 'Calm & Patient', 'Encouraging', 'Curious',
+    'Witty', 'Chatty', 'Gentle', 'Enthusiastic', 'Thoughtful',
+  ];
+  final Set<String> _selectedPersonalities = {};
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Set up your pal')),
-      body: Center(
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.start,
           children: [
-            const Text('Let’s create your English pal!'),
-            const SizedBox(height: 20),
+            const Text('What would you like to name your pal?'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _nameController,
+              decoration: const InputDecoration(
+                hintText: 'e.g. Mia, Leo, Aria...',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 24),
+            const Text('Pick a few personality traits:'),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                for (final option in _personalityOptions)
+                  FilterChip(
+                    label: Text(option),
+                    selected: _selectedPersonalities.contains(option),
+                    onSelected: (isSelected) {
+                      setState(() {
+                        if (isSelected) {
+                          _selectedPersonalities.add(option);
+                        } else {
+                          _selectedPersonalities.remove(option);
+                        }
+                      });
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 24),
             ElevatedButton(
               onPressed: () {
                 Navigator.push(
