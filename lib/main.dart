@@ -32,6 +32,11 @@ class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _scrollController = ScrollController(); 
   bool _isMiaTyping = false;
   String summary = '';
+  String palName = 'Mia';
+  List<String> personality = [];
+  List<String> hobbies = [];
+  List<String> topics = [];
+  String level = 'Intermediate';
   String get _backendUrl =>
       kIsWeb ? 'http://127.0.0.1:8000/chat' : 'http://10.0.2.2:8000/chat';
   
@@ -67,6 +72,11 @@ class _ChatScreenState extends State<ChatScreen> {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'summary': summary,
+          'palName': palName,
+          'personality': personality,
+          'hobbies': hobbies,
+          'topics': topics,
+          'level': level,
           'messages': [
             for (final m in recent)
               {
@@ -101,6 +111,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _loadChat() async {
     final prefs = await SharedPreferences.getInstance();
+    palName = prefs.getString('palName') ?? 'Mia';
+    personality = prefs.getStringList('personality') ?? [];
+    hobbies = prefs.getStringList('hobbies') ?? [];
+    topics = prefs.getStringList('topics') ?? [];
+    level = prefs.getString('level') ?? 'Intermediate';
     final savedMessages = prefs.getString('messages');
     final savedSummary = prefs.getString('summary');
 
@@ -109,6 +124,15 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         messages.clear();
         messages.addAll(decoded.cast<Map<String, dynamic>>());
+      });
+    }
+    else {
+      setState(() {
+        messages.clear();
+        messages.add({
+          'text': "Hi! I'm $palName. How's your day going?",
+          'isUser': false,
+        });
       });
     }
     if (savedSummary != null) {
@@ -138,6 +162,17 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Future<void> _resetApp() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
+    if (!mounted) return;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (context) => const SetupScreen()),
+      (route) => false,
+    );
+  }
+  
   Widget _correctionCard(String correction) {
     return Align(
       alignment: Alignment.centerRight,
@@ -198,6 +233,13 @@ class _ChatScreenState extends State<ChatScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('English Pal'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Start over',
+            onPressed: _resetApp,
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -336,6 +378,15 @@ class _SetupScreenState extends State<SetupScreen> {
     );
   }
 
+  Future<void> _saveSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('palName', _nameController.text);
+    await prefs.setStringList('personality', _selectedPersonalities.toList());
+    await prefs.setStringList('hobbies', _selectedHobbies.toList());
+    await prefs.setStringList('topics', _selectedTopics.toList());
+    await prefs.setString('level', _selectedLevel);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -394,7 +445,9 @@ class _SetupScreenState extends State<SetupScreen> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () {
+                onPressed: () async {
+                  await _saveSettings();
+                  if (!context.mounted) return;
                   Navigator.push(
                     context,
                     MaterialPageRoute(builder: (context) => const ChatScreen()),

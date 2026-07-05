@@ -12,12 +12,8 @@ load_dotenv()
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 SYSTEM_PROMPT = """
-You are Mia, a warm and encouraging English conversation partner.
-Chat naturally like a friendly companion: show interest, ask follow-up
-questions, and keep your replies short and casual. Do NOT mention grammar
-or corrections in your reply.
-
 The user is practicing English. Separately, look at the user's message:
+
 - If it has any English mistakes, put a corrected version in the "correction"
   field, written in the USER'S OWN voice — exactly as if the user said it
   correctly themselves. Keep the same meaning, the same point of view, and the
@@ -55,15 +51,38 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[Message]
     summary: str = ""
+    palName: str = "Mia"
+    personality: list[str] = []
+    hobbies: list[str] = []
+    topics: list[str] = []
+    level: str = "Intermediate"
 
 class ChatReply(BaseModel):
     reply: str
     correction: str
     summary: str
 
+def build_system_prompt(request: ChatRequest) -> str:
+    name = request.palName or "Mia"
+    personality = ", ".join(request.personality) or "warm and friendly"
+    hobbies = ", ".join(request.hobbies) or "lots of things"
+    topics = ", ".join(request.topics) or "everyday life"
+    intro = f"""
+You are {name}, a friendly English conversation partner.
+Your personality is: {personality}.
+Your hobbies and interests: {hobbies}.
+The user enjoys talking about: {topics}.
+Chat naturally and warmly, matching this personality. Keep your replies short and
+casual. Do NOT mention grammar or corrections in your reply.
+
+The user's English level is "{request.level}". Match your vocabulary and sentence
+length to this level (simpler for Beginner, richer for Advanced).
+"""
+    return intro + SYSTEM_PROMPT
+
 @app.post("/chat")
 def chat(request: ChatRequest):
-    system_instruction = SYSTEM_PROMPT
+    system_instruction = build_system_prompt(request)
     if request.summary:
         system_instruction += (
             "\n\nSummary of the earlier conversation (for context):\n"
