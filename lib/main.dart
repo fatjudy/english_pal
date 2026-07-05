@@ -4,11 +4,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/data/latest.dart' as tzdata;
+import 'package:timezone/timezone.dart' as tz;
+import 'package:flutter_timezone/flutter_timezone.dart';
 
 final FlutterLocalNotificationsPlugin notificationsPlugin =
     FlutterLocalNotificationsPlugin();
 
 Future<void> initNotifications() async {
+  tzdata.initializeTimeZones();
+  final String timeZoneName =
+      (await FlutterTimezone.getLocalTimezone()).identifier;
+  tz.setLocalLocation(tz.getLocation(timeZoneName));
   const AndroidInitializationSettings androidSettings =
       AndroidInitializationSettings('@mipmap/ic_launcher');
   const InitializationSettings settings =
@@ -25,6 +32,37 @@ Future<void> initNotifications() async {
           AndroidFlutterLocalNotificationsPlugin>();
   await androidImpl?.createNotificationChannel(channel);
   await androidImpl?.requestNotificationsPermission();
+}
+
+Future<void> scheduleNotification(
+    int id, int hour, int minute, String topic) async {
+  final now = tz.TZDateTime.now(tz.local);
+  var scheduledDate =
+      tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
+  if (scheduledDate.isBefore(now)) {
+    scheduledDate = scheduledDate.add(const Duration(days: 1));
+  }
+
+  const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+    'english_pal_channel',
+    'Chat reminders',
+    channelDescription: 'Reminders from your English pal',
+    importance: Importance.high,
+    priority: Priority.high,
+  );
+  const NotificationDetails details =
+      NotificationDetails(android: androidDetails);
+
+  await notificationsPlugin.zonedSchedule(
+    id: id,
+    scheduledDate: scheduledDate,
+    notificationDetails: details,
+    androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+    title: 'Your English pal wants to chat!',
+    body: topic == 'Surprise me' ? "Let's chat!" : "Let's talk about $topic",
+    matchDateTimeComponents: DateTimeComponents.time,
+    payload: topic,
+  );
 }
 
 void main() async {
@@ -535,6 +573,87 @@ class SettingsScreen extends StatelessWidget {
             },
           ),
         ],
+      ),
+    );
+  }
+}
+
+class ScheduleScreen extends StatefulWidget {
+  const ScheduleScreen({super.key});
+
+  @override
+  State<ScheduleScreen> createState() => _ScheduleScreenState();
+}
+
+class _ScheduleScreenState extends State<ScheduleScreen> {
+  final List<Map<String, dynamic>> schedules = [];
+  final TextEditingController _topicController = TextEditingController();
+
+  Future<void> _addSchedule() async {
+    final TimeOfDay? time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.now(),
+    );
+    if (time == null || !mounted) return;
+
+    _topicController.clear();
+    final String? topic = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('What topic?'),
+        content: TextField(
+          controller: _topicController,
+          decoration: const InputDecoration(
+            hintText: 'e.g. Food — or leave blank for random',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, _topicController.text),
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+    if (topic == null) return;
+
+    final int id = DateTime.now().millisecondsSinceEpoch.remainder(100000);
+    final String finalTopic = topic.isEmpty ? 'Surprise me' : topic;
+    setState(() {
+      schedules.add({
+        'id': id,
+        'hour': time.hour,
+        'minute': time.minute,
+        'time': time.format(context),
+        'topic': finalTopic,
+      });
+    });
+    await scheduleNotification(id, time.hour, time.minute, finalTopic);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Scheduled messages')),
+      body: schedules.isEmpty
+          ? const Center(child: Text('No schedules yet. Tap + to add one.'))
+          : ListView(
+              children: [
+                for (final schedule in schedules)
+                  ListTile(
+                    leading: const Icon(Icons.notifications),
+                    title: Text(schedule['time']),
+                    subtitle: Text(schedule['topic']),
+                  ),
+              ],
+            ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _addSchedule,
+        child: const Icon(Icons.add),
       ),
     );
   }
