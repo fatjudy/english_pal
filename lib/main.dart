@@ -263,6 +263,51 @@ class _SetupScreenState extends State<SetupScreen> {
   ];
   final Set<String> _selectedPersonalities = {};
 
+  final List<String> _hobbyOptions = [
+    'Sports', 'Music', 'Movies & TV', 'Gaming', 'Cooking', 'Travel',
+    'Books', 'Art', 'Technology', 'Nature', 'Fitness', 'Pets',
+    'Photography', 'Science',
+  ];
+  final Set<String> _selectedHobbies = {};
+
+  final List<String> _topicOptions = [
+    'Daily life', 'Work/Career', 'Travel English', 'Job interviews',
+    'Small talk', 'Hobbies', 'News', 'Food', 'Culture', 'Studying abroad',
+    'Shopping', 'Health',
+  ];
+  final Set<String> _selectedTopics = {};
+
+  Widget _chipSection(String label, List<String> options, Set<String> selected) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            for (final option in options)
+              FilterChip(
+                label: Text(option),
+                selected: selected.contains(option),
+                onSelected: (isSelected) {
+                  setState(() {
+                    if (isSelected) {
+                      selected.add(option);
+                    } else {
+                      selected.remove(option);
+                    }
+                  });
+                },
+              ),
+          ],
+        ),
+        const SizedBox(height: 24),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -282,7 +327,12 @@ class _SetupScreenState extends State<SetupScreen> {
               ),
             ),
             const SizedBox(height: 24),
-            const Text('Pick a few personality traits:'),
+            _chipSection('Pick a few personality traits:', _personalityOptions,
+                _selectedPersonalities),
+            _chipSection("What are your pal's hobbies?", _hobbyOptions,
+                _selectedHobbies),
+            _chipSection('What do you want to talk about?', _topicOptions,
+                _selectedTopics),
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
