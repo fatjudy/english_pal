@@ -257,6 +257,7 @@ class SetupScreen extends StatefulWidget {
 
 class _SetupScreenState extends State<SetupScreen> {
   final TextEditingController _nameController = TextEditingController();
+  final PageController _pageController = PageController();
   final List<String> _personalityOptions = [
     'Friendly', 'Funny', 'Calm & Patient', 'Encouraging', 'Curious',
     'Witty', 'Chatty', 'Gentle', 'Enthusiastic', 'Thoughtful',
@@ -276,6 +277,8 @@ class _SetupScreenState extends State<SetupScreen> {
     'Shopping', 'Health',
   ];
   final Set<String> _selectedTopics = {};
+
+  String _selectedLevel = 'Intermediate';
 
   Widget _chipSection(String label, List<String> options, Set<String> selected) {
     return Column(
@@ -308,15 +311,40 @@ class _SetupScreenState extends State<SetupScreen> {
     );
   }
 
+  Widget _nextButton() {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: ElevatedButton(
+        onPressed: () {
+          _pageController.nextPage(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+          );
+        },
+        child: const Text('Next'),
+      ),
+    );
+  }
+
+  Widget _wizardPage(List<Widget> children) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: children,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Set up your pal')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.start,
-          children: [
+      body: PageView(
+        controller: _pageController,
+        children: [
+          _wizardPage([
+            const SizedBox(height: 20),
             const Text('What would you like to name your pal?'),
             const SizedBox(height: 12),
             TextField(
@@ -329,43 +357,57 @@ class _SetupScreenState extends State<SetupScreen> {
             const SizedBox(height: 24),
             _chipSection('Pick a few personality traits:', _personalityOptions,
                 _selectedPersonalities),
+            _nextButton(),
+          ]),
+          _wizardPage([
+            const SizedBox(height: 20),
             _chipSection("What are your pal's hobbies?", _hobbyOptions,
                 _selectedHobbies),
+            _nextButton(),
+          ]),
+          _wizardPage([
+            const SizedBox(height: 20),
             _chipSection('What do you want to talk about?', _topicOptions,
                 _selectedTopics),
+            _nextButton(),
+          ]),
+          _wizardPage([
+            const SizedBox(height: 20),
+            const Text('Your English level:'),
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
-              runSpacing: 4,
               children: [
-                for (final option in _personalityOptions)
-                  FilterChip(
-                    label: Text(option),
-                    selected: _selectedPersonalities.contains(option),
+                for (final level in ['Beginner', 'Intermediate', 'Advanced'])
+                  ChoiceChip(
+                    label: Text(level),
+                    selected: _selectedLevel == level,
                     onSelected: (isSelected) {
                       setState(() {
-                        if (isSelected) {
-                          _selectedPersonalities.add(option);
-                        } else {
-                          _selectedPersonalities.remove(option);
-                        }
+                        _selectedLevel = level;
                       });
                     },
                   ),
               ],
             ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const ChatScreen()),
-                );
-              },
-              child: const Text('Continue'),
+            const SizedBox(height: 32),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const ChatScreen()),
+                  );
+                },
+                child: const Padding(
+                  padding: EdgeInsets.all(14),
+                  child: Text('Start', style: TextStyle(fontSize: 18)),
+                ),
+              ),
             ),
-          ],
-        ),
+          ]),
+        ],
       ),
     );
   }
