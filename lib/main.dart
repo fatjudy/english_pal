@@ -3,8 +3,33 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-void main() {
+final FlutterLocalNotificationsPlugin notificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
+Future<void> initNotifications() async {
+  const AndroidInitializationSettings androidSettings =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+  const InitializationSettings settings =
+      InitializationSettings(android: androidSettings);
+  await notificationsPlugin.initialize(settings: settings);
+  const AndroidNotificationChannel channel = AndroidNotificationChannel(
+    'english_pal_channel',
+    'Chat reminders',
+    description: 'Reminders from your English pal',
+    importance: Importance.high,
+  );
+  final androidImpl = notificationsPlugin
+      .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+  await androidImpl?.createNotificationChannel(channel);
+  await androidImpl?.requestNotificationsPermission();
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await initNotifications();
   runApp(const MyApp());
 }
 
@@ -176,17 +201,6 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
-
-  Future<void> _resetApp() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
-    if (!mounted) return;
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (context) => const SetupScreen()),
-      (route) => false,
-    );
-  }
   
   Widget _correctionCard(String correction) {
     return Align(
@@ -250,9 +264,14 @@ class _ChatScreenState extends State<ChatScreen> {
         title: const Text('English Pal'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Start over',
-            onPressed: _resetApp,
+            icon: const Icon(Icons.settings),
+            tooltip: 'Settings',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const SettingsScreen()),
+              );
+            },
           ),
         ],
       ),
@@ -475,6 +494,46 @@ class _SetupScreenState extends State<SetupScreen> {
               ),
             ),
           ]),
+        ],
+      ),
+    );
+  }
+}
+
+class SettingsScreen extends StatelessWidget {
+  const SettingsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Settings')),
+      body: ListView(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.schedule),
+            title: const Text('Scheduled messages'),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const ScheduleScreen()),
+              );
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.refresh),
+            title: const Text('Start over'),
+            subtitle: const Text('Clear everything and set up a new pal'),
+            onTap: () async {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.clear();
+              if (!context.mounted) return;
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (context) => const SetupScreen()),
+                (route) => false,
+              );
+            },
+          ),
         ],
       ),
     );
