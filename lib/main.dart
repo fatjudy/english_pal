@@ -14,7 +14,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const MaterialApp(
-      home: ChatScreen(),
+      home: SetupScreen(),
     );
   }
 }
@@ -243,6 +243,35 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+class SetupScreen extends StatelessWidget {
+  const SetupScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Set up your pal')),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text('Let’s create your English pal!'),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const ChatScreen()),
+                );
+              },
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
       ),
     );
   }
