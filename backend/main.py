@@ -69,21 +69,29 @@ def chat(request: ChatRequest):
             "\n\nSummary of the earlier conversation (for context):\n"
             + request.summary
         )
-    response = client.models.generate_content(
-        model="gemini-2.5-flash-lite",
-        contents=[
-            {"role": m.role, "parts": [{"text": m.text}]}
-            for m in request.messages
-        ],
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            response_mime_type="application/json",
-            response_schema=ChatReply,
-        ),
-    )
-    return {
-        "reply": response.parsed.reply,
-        "correction": response.parsed.correction,
-        "summary": response.parsed.summary,
-    }
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-lite",
+            contents=[
+                {"role": m.role, "parts": [{"text": m.text}]}
+                for m in request.messages
+            ],
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                response_mime_type="application/json",
+                response_schema=ChatReply,
+            ),
+        )
+        return {
+            "reply": response.parsed.reply,
+            "correction": response.parsed.correction,
+            "summary": response.parsed.summary,
+        }
+    except Exception as e:
+        print("Gemini error:", e)
+        return {
+            "reply": "Sorry, I'm a bit busy right now — please try again in a moment!",
+            "correction": "",
+            "summary": request.summary,
+        }
 

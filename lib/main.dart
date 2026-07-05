@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -31,7 +32,9 @@ class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _scrollController = ScrollController(); 
   bool _isMiaTyping = false;
   String summary = '';
-
+  String get _backendUrl =>
+      kIsWeb ? 'http://127.0.0.1:8000/chat' : 'http://10.0.2.2:8000/chat';
+  
   final List<Map<String, dynamic>> messages = [
     {'text': "Hi! I'm Mia. How's your day going?", 'isUser': false},
   ];
@@ -60,7 +63,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       final response = await http.post(
-        Uri.parse('http://127.0.0.1:8000/chat'),
+        Uri.parse(_backendUrl),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'summary': summary,
