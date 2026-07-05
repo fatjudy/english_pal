@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
@@ -20,57 +21,104 @@ class MyApp extends StatelessWidget {
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
 
+
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
+  final ScrollController _scrollController = ScrollController(); 
+  bool _isMiaTyping = false;
   String summary = '';
 
   final List<Map<String, dynamic>> messages = [
-    {'text': 'Hi! I am Mia. How was your weekend?', 'isUser': false},
-    {'text': 'It was great, thanks! I went hiking.', 'isUser': true},
-    {'text': 'Nice! Did you go alone or with friends?', 'isUser': false},
+    {'text': "Hi! I'm Mia. How's your day going?", 'isUser': false},
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadChat();
+  }
 
   Future<void> _sendMessage() async {
     final text = _controller.text;
     if (text.isEmpty) return;
 
-    final userMessage = {'text': text, 'isUser': true, 'correction': ''};
+    final userMessage = {'text': text, 'isUser': true, 'correction': '', 'checked': false};
     setState(() {
       messages.add(userMessage);
+      _isMiaTyping = true;
     });
     _controller.clear();
+    _scrollToBottom();
 
     final recent = messages.length > 16
         ? messages.sublist(messages.length - 16)
         : messages;
 
-    final response = await http.post(
-      Uri.parse('http://127.0.0.1:8000/chat'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'summary': summary,
-        'messages': [
-          for (final m in recent)
-            {
-              'role': m['isUser'] == true ? 'user' : 'model',
-              'text': m['text'],
-            },
-        ],
-      }),
-    );
+    try {
+      final response = await http.post(
+        Uri.parse('http://127.0.0.1:8000/chat'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'summary': summary,
+          'messages': [
+            for (final m in recent)
+              {
+                'role': m['isUser'] == true ? 'user' : 'model',
+                'text': m['text'],
+              },
+          ],
+        }),
+      );
 
-    final data = jsonDecode(response.body);
-    summary = data['summary'];
-    
-    setState(() {
-      userMessage['correction'] = data['correction'];
-      messages.add({'text': data['reply'], 'isUser': false});
-    });
+        final data = jsonDecode(response.body);
+        summary = data['summary'];
+
+      setState(() {
+        userMessage['correction'] = data['correction'];
+        userMessage['checked'] = true;
+        messages.add({'text': data['reply'], 'isUser': false});
+        _isMiaTyping = false;
+      });
+    _scrollToBottom();
+    } catch (e) {
+      setState(() {
+        messages.add({
+          'text': "Sorry, I couldn't reach the server. Is the backend running?",
+          'isUser': false,
+        });
+        _isMiaTyping = false;
+      });
     }
+    _saveChat();
+  }
+
+  Future<void> _loadChat() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedMessages = prefs.getString('messages');
+    final savedSummary = prefs.getString('summary');
+
+    if (savedMessages != null) {
+      final decoded = jsonDecode(savedMessages) as List;
+      setState(() {
+        messages.clear();
+        messages.addAll(decoded.cast<Map<String, dynamic>>());
+      });
+    }
+    if (savedSummary != null) {
+      summary = savedSummary;
+    }
+    _scrollToBottom();
+  }
+
+  Future<void> _saveChat() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('messages', jsonEncode(messages));
+    await prefs.setString('summary', summary);
+  }
 
   Widget _messageBubble(String text, bool isUser) {
     return Align(
@@ -102,6 +150,46 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
   
+    Widget _looksGoodNote() {
+    return const Align(
+      alignment: Alignment.centerRight,
+      child: Padding(
+        padding: EdgeInsets.only(right: 16, bottom: 8),
+        child: Text(
+          '✓ Looks good!',
+          style: TextStyle(color: Colors.green, fontSize: 12),
+        ),
+      ),
+    );
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+  
+    Widget _typingIndicator() {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade200,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Text('Mia is typing…'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -111,8 +199,9 @@ class _ChatScreenState extends State<ChatScreen> {
       body: Column(
         children: [
           Expanded(
-            child: ListView(
-              children: [
+              child: ListView(
+                controller: _scrollController,
+                children: [
                 for (final message in messages)
                   Column(
                     children: [
@@ -124,11 +213,16 @@ class _ChatScreenState extends State<ChatScreen> {
                           message['correction'] != null &&
                           message['correction'] != '')
                         _correctionCard(message['correction']),
+                      if (message['isUser'] == true &&
+                          message['checked'] == true &&
+                          message['correction'] == '')
+                        _looksGoodNote(),                      
                     ],
                   ),
               ],
             ),
           ),
+          if (_isMiaTyping) _typingIndicator(),
           Row(
             children: [
               Expanded(

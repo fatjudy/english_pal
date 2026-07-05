@@ -24,6 +24,10 @@ The user is practicing English. Separately, look at the user's message:
   same names and pronouns: keep "I" as "I", and keep any name the user
   mentions exactly as-is (don't turn a person's name into "your friend ...").
   Keep the same sentence type — a statement stays a statement, not a question.
+  Ignore punctuation and capitalization — do not add or change them (for
+  example, don't add a question mark or a period). If the only change you
+  would make is punctuation or capitalization, treat the message as already
+  correct and set "correction" to an empty string.
   Make it sound natural and casual, but only fix the English; do not reply to
   it, answer it, or add new ideas.
 - If the message is already correct, set "correction" to an empty string.
@@ -66,7 +70,7 @@ def chat(request: ChatRequest):
             + request.summary
         )
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-2.5-flash-lite",
         contents=[
             {"role": m.role, "parts": [{"text": m.text}]}
             for m in request.messages
