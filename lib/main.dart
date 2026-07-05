@@ -11,10 +11,25 @@ void main() {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
+  Future<bool> _isSetUp() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('palName') != null;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
-      home: SetupScreen(),
+    return MaterialApp(
+      home: FutureBuilder<bool>(
+        future: _isSetUp(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
+          return snapshot.data! ? const ChatScreen() : const SetupScreen();
+        },
+      ),
     );
   }
 }
@@ -448,7 +463,7 @@ class _SetupScreenState extends State<SetupScreen> {
                 onPressed: () async {
                   await _saveSettings();
                   if (!context.mounted) return;
-                  Navigator.push(
+                  Navigator.pushReplacement(
                     context,
                     MaterialPageRoute(builder: (context) => const ChatScreen()),
                   );
