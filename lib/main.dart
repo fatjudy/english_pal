@@ -531,6 +531,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               Expanded(
                 child: TextField(
                   controller: _controller,
+                  maxLength: 500,
                   decoration: const InputDecoration(
                     hintText: 'Type a message...',
                   ),

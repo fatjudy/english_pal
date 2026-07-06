@@ -137,6 +137,11 @@ REPLY_TOOL = {
 # The app labels messages user/model (Gemini style); Claude wants user/assistant.
 ROLE_MAP = {"user": "user", "model": "assistant", "assistant": "assistant"}
 
+# Reject over-long user messages before calling the model, to bound cost/abuse.
+# (The app also limits input to 500 chars; this backend cap is the real guard,
+# with slack so a legit near-limit message never trips it.)
+MAX_MESSAGE_CHARS = 1000
+
 def build_system_prompt(request: ChatRequest) -> str:
     name = request.palName or "Mia"
     personality = ", ".join(request.personality) or "warm and friendly"
@@ -167,6 +172,19 @@ length to this level (simpler for Beginner, richer for Advanced).
 
 @app.post("/chat")
 def chat(request: ChatRequest):
+    # Guard: if the latest user message is too long, reply without calling the
+    # model at all (costs no tokens).
+    last_user = next(
+        (m for m in reversed(request.messages) if m.role == "user"), None
+    )
+    if last_user and len(last_user.text) > MAX_MESSAGE_CHARS:
+        return {
+            "reply": "Whoa, that's a lot to read at once! 😅 Could you send me a "
+                     "shorter message so we can chat properly?",
+            "correction": "",
+            "summary": request.summary,
+        }
+
     system_instruction = build_system_prompt(request)
     if request.summary:
         system_instruction += (
