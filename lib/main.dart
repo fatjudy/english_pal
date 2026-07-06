@@ -379,6 +379,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       setState(() {
         userMessage['correction'] = data['correction'];
         userMessage['why'] = data['why'] ?? '';
+        userMessage['understood'] = data['understood'] ?? true;
         userMessage['checked'] = true;
         messages.add({'text': data['reply'], 'isUser': false});
         _isMiaTyping = false;
@@ -670,8 +671,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             message['correction'], message['why'] ?? ''),
                       if (message['isUser'] == true &&
                           message['checked'] == true &&
-                          message['correction'] == '')
-                        _looksGoodNote(),                      
+                          message['correction'] == '' &&
+                          message['understood'] != false)
+                        _looksGoodNote(),
                     ],
                   ),
               ],

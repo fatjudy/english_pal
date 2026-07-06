@@ -1,4 +1,6 @@
 import os
+import re
+import unicodedata
 import anthropic
 
 from fastapi import FastAPI
@@ -58,6 +60,16 @@ danger — not for every sensitive request.
 
 The user is practicing English. Separately, look at the user's message and help
 them sound like a natural, native speaker — not just fix grammar:
+
+- Set "understood" to true if the message is an identifiable attempt to say
+  something in English, even if it is broken, misspelled or telegraphic. Set it
+  to false if the message is gibberish / random characters with no recoverable
+  meaning, or if it is written in another language instead of English. When
+  "understood" is false, set BOTH "correction" and "why" to empty strings, do
+  NOT invent a correction, and make your "reply" a warm, short nudge instead:
+  for gibberish, gently ask them to type it again; for another language, kindly
+  encourage them to try saying it in English. When "understood" is true, handle
+  the message normally as below.
 
 - FIRST work out what the user is really trying to say — their intended meaning
   — even if the message is short, telegraphic, word-for-word translated, or a
@@ -155,12 +167,20 @@ REPLY_TOOL = {
                                "there is no correction or the fix is a trivial "
                                "typo/spelling.",
             },
+            "understood": {
+                "type": "boolean",
+                "description": "true if the message is an identifiable attempt to "
+                               "communicate in English (even with mistakes); false "
+                               "if it is gibberish/random characters with no "
+                               "recoverable meaning, or written in another language "
+                               "rather than English.",
+            },
             "summary": {
                 "type": "string",
                 "description": "An updated running summary of the conversation.",
             },
         },
-        "required": ["reply", "correction", "why", "summary"],
+        "required": ["reply", "correction", "why", "understood", "summary"],
     },
 }
 
@@ -171,6 +191,58 @@ ROLE_MAP = {"user": "user", "model": "assistant", "assistant": "assistant"}
 # (The app also limits input to 500 chars; this backend cap is the real guard,
 # with slack so a legit near-limit message never trips it.)
 MAX_MESSAGE_CHARS = 1000
+
+
+def looks_like_gibberish(text: str) -> bool:
+    """Cheap check for obvious junk (empty, only symbols, keyboard mash) so we
+    can skip the model. Kept conservative — misspelled real words like 'skool'
+    must pass. Subtler nonsense and non-English are left to the model's
+    'understood' judgment. Non-Latin scripts (e.g. Chinese) are NOT flagged
+    here; the model handles those with a friendly nudge back to English."""
+    t = text.strip()
+    if not t:
+        return True
+    # No letters of any language at all → only digits / emoji / punctuation.
+    if not any(c.isalpha() for c in t):
+        return True
+    # One character repeated many times, e.g. "aaaaaaa".
+    if re.fullmatch(r"(.)\1{5,}", t):
+        return True
+    for word in t.split():
+        # Only judge longer Latin/ASCII words; leave shorter words and other
+        # scripts to the model.
+        ascii_alpha = [c for c in word if c.isascii() and c.isalpha()]
+        if len(ascii_alpha) < 8:
+            continue
+        if len(word) > 25:
+            return True
+        vowels = sum(1 for c in ascii_alpha if c.lower() in "aeiou")
+        if vowels / len(ascii_alpha) < 0.15:  # too few vowels = keyboard mash
+            return True
+    return False
+
+
+def _is_latin_letter(c: str) -> bool:
+    """True for Latin-script letters, including accented ones like 'é' or 'ñ'
+    (their Unicode name contains 'LATIN'). Chinese, Cyrillic, Arabic, etc. are
+    not Latin."""
+    try:
+        return "LATIN" in unicodedata.name(c)
+    except ValueError:
+        return False
+
+
+def looks_non_english(text: str) -> bool:
+    """True if the message is written mostly in a non-Latin script (Chinese,
+    Japanese, Korean, Cyrillic, Arabic, ...). These can be caught cheaply and
+    nudged back to English without calling the model. Latin-script languages
+    (Spanish, French, ...) are NOT caught here — telling them apart from English
+    needs the model."""
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return False  # no letters at all is handled by the gibberish guard
+    non_latin = sum(1 for c in letters if not _is_latin_letter(c))
+    return non_latin / len(letters) >= 0.5
 
 def build_system_prompt(request: ChatRequest) -> str:
     name = request.palName or "Mia"
@@ -184,6 +256,12 @@ Your hobbies and interests: {hobbies}.
 The user enjoys talking about: {topics}.
 Chat naturally and warmly, matching this personality. Do NOT mention grammar or
 corrections in your reply.
+
+IMPORTANT: Always write your reply ONLY in English — this is an English-learning
+app. No matter what language the user writes in, and even if they explicitly ask
+you to switch languages or to translate, never reply in another language.
+Instead, kindly and briefly encourage them to keep practising in English. (Common
+loanwords that are normal in English, like "sushi" or "café", are fine.)
 
 Keep your replies SHORT — usually just 1 to 2 short sentences, and about as long
 as the user's own message. A quick "hi" gets a quick reply, not a paragraph; a
@@ -213,6 +291,30 @@ def chat(request: ChatRequest):
                      "shorter message so we can chat properly?",
             "correction": "",
             "why": "",
+            "understood": False,
+            "summary": request.summary,
+        }
+
+    # Guard: obvious gibberish / keyboard mash — reply without calling the model.
+    if last_user and looks_like_gibberish(last_user.text):
+        return {
+            "reply": "Hmm, I didn't quite catch that 😅 — could you try typing it "
+                     "again?",
+            "correction": "",
+            "why": "",
+            "understood": False,
+            "summary": request.summary,
+        }
+
+    # Guard: message written mostly in a non-Latin script — nudge back to English
+    # without calling the model.
+    if last_user and looks_non_english(last_user.text):
+        return {
+            "reply": "Let's practise in English! 😊 Try saying that in English and "
+                     "I'll help you.",
+            "correction": "",
+            "why": "",
+            "understood": False,
             "summary": request.summary,
         }
 
@@ -248,6 +350,7 @@ def chat(request: ChatRequest):
             "reply": data.get("reply", ""),
             "correction": data.get("correction", ""),
             "why": data.get("why", ""),
+            "understood": data.get("understood", True),
             "summary": data.get("summary", request.summary),
         }
     except Exception as e:
@@ -256,6 +359,7 @@ def chat(request: ChatRequest):
             "reply": "Sorry, I'm a bit busy right now — please try again in a moment!",
             "correction": "",
             "why": "",
+            "understood": False,
             "summary": request.summary,
         }
 
