@@ -34,8 +34,34 @@ Future<void> initNotifications() async {
   await androidImpl?.requestNotificationsPermission();
 }
 
-Future<void> scheduleNotification(
-    int id, int hour, int minute, String topic) async {
+Future<String> fetchOpener(String topic) async {
+  final prefs = await SharedPreferences.getInstance();
+  final url = kIsWeb
+      ? 'http://127.0.0.1:8000/opener'
+      : 'http://10.0.2.2:8000/opener';
+  try {
+    final response = await http.post(
+      Uri.parse(url),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'topic': topic,
+        'palName': prefs.getString('palName') ?? 'Mia',
+        'personality': prefs.getStringList('personality') ?? [],
+        'hobbies': prefs.getStringList('hobbies') ?? [],
+        'level': prefs.getString('level') ?? 'Intermediate',
+      }),
+    );
+    final data = jsonDecode(response.body);
+    return data['message'];
+  } catch (e) {
+    return topic == 'Surprise me'
+        ? 'Hey! Got a minute to chat?'
+        : 'Hey! Want to chat about $topic?';
+  }
+}
+
+Future<void> scheduleNotification(int id, int hour, int minute,
+    String palName, String opener, String topic) async {
   final now = tz.TZDateTime.now(tz.local);
   var scheduledDate =
       tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
@@ -43,14 +69,23 @@ Future<void> scheduleNotification(
     scheduledDate = scheduledDate.add(const Duration(days: 1));
   }
 
-  const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+  final MessagingStyleInformation styleInfo = MessagingStyleInformation(
+    const Person(name: 'You'),
+    conversationTitle: palName,
+    messages: [
+      Message(opener, DateTime.now(), Person(name: palName)),
+    ],
+  );
+
+  final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
     'english_pal_channel',
     'Chat reminders',
     channelDescription: 'Reminders from your English pal',
     importance: Importance.high,
     priority: Priority.high,
+    styleInformation: styleInfo,
   );
-  const NotificationDetails details =
+  final NotificationDetails details =
       NotificationDetails(android: androidDetails);
 
   await notificationsPlugin.zonedSchedule(
@@ -58,8 +93,8 @@ Future<void> scheduleNotification(
     scheduledDate: scheduledDate,
     notificationDetails: details,
     androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-    title: 'Your English pal wants to chat!',
-    body: topic == 'Surprise me' ? "Let's chat!" : "Let's talk about $topic",
+    title: palName,
+    body: opener,
     matchDateTimeComponents: DateTimeComponents.time,
     payload: topic,
   );
@@ -589,6 +624,41 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   final List<Map<String, dynamic>> schedules = [];
   final TextEditingController _topicController = TextEditingController();
 
+  @override
+  void initState() {
+    super.initState();
+    _loadSchedules();
+  }
+
+  Future<void> _loadSchedules() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? saved = prefs.getString('schedules');
+    if (saved == null) return;
+    final List decoded = jsonDecode(saved) as List;
+    final String palName = prefs.getString('palName') ?? 'Mia';
+    setState(() {
+      schedules.clear();
+      schedules.addAll(decoded.cast<Map<String, dynamic>>());
+    });
+    for (final s in schedules) {
+      await scheduleNotification(
+          s['id'], s['hour'], s['minute'], palName, s['opener'], s['topic']);
+    }
+  }
+
+  Future<void> _saveSchedules() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('schedules', jsonEncode(schedules));
+  }
+
+  Future<void> _deleteSchedule(Map<String, dynamic> schedule) async {
+    await notificationsPlugin.cancel(id: schedule['id']);
+    setState(() {
+      schedules.remove(schedule);
+    });
+    await _saveSchedules();
+  }
+
   Future<void> _addSchedule() async {
     final TimeOfDay? time = await showTimePicker(
       context: context,
@@ -621,8 +691,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
     if (topic == null) return;
 
-    final int id = DateTime.now().millisecondsSinceEpoch.remainder(100000);
+    final int id = DateTime.now().millisecondsSinceEpoch.remainder(2147483647);
     final String finalTopic = topic.isEmpty ? 'Surprise me' : topic;
+    final String opener = await fetchOpener(finalTopic);
+    final prefs = await SharedPreferences.getInstance();
+    final String palName = prefs.getString('palName') ?? 'Mia';
+
     setState(() {
       schedules.add({
         'id': id,
@@ -630,9 +704,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         'minute': time.minute,
         'time': time.format(context),
         'topic': finalTopic,
+        'opener': opener,
       });
     });
-    await scheduleNotification(id, time.hour, time.minute, finalTopic);
+    await _saveSchedules();
+    await scheduleNotification(
+        id, time.hour, time.minute, palName, opener, finalTopic);
   }
 
   @override
@@ -648,6 +725,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     leading: const Icon(Icons.notifications),
                     title: Text(schedule['time']),
                     subtitle: Text(schedule['topic']),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () => _deleteSchedule(schedule),
+                    ),
                   ),
               ],
             ),

@@ -136,3 +136,48 @@ def chat(request: ChatRequest):
             "summary": request.summary,
         }
 
+class OpenerRequest(BaseModel):
+    topic: str
+    palName: str = "Mia"
+    personality: list[str] = []
+    hobbies: list[str] = []
+    level: str = "Intermediate"
+
+class OpenerRequest(BaseModel):
+    topic: str
+    palName: str = "Mia"
+    personality: list[str] = []
+    hobbies: list[str] = []
+    level: str = "Intermediate"
+
+@app.post("/opener")
+def opener(request: OpenerRequest):
+    name = request.palName or "Mia"
+    personality = ", ".join(request.personality) or "warm and friendly"
+    hobbies = ", ".join(request.hobbies) or "lots of things"
+    topic = request.topic or "anything"
+    if topic.lower() in ("surprise me", "anything", ""):
+        topic_line = "Pick any fun topic yourself — something you like or something popular right now."
+    else:
+        topic_line = f'Start a conversation about "{topic}".'
+    instruction = f"""
+You are {name}, a friendly English conversation partner. Your personality:
+{personality}. You are into: {hobbies}.
+
+Text your friend a short, warm opening message, out of the blue, like a friend
+texting. {topic_line} Share something you like or something popular or current.
+Use real, specific examples — never use placeholders like "[insert ...]".
+Be natural and casual, just 1-2 sentences, at an English level of
+"{request.level}". Return ONLY the message text.
+"""
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-lite",
+            contents=instruction,
+        )
+        return {"message": response.text.strip()}
+    except Exception as e:
+        print("Opener error:", e)
+        if topic.lower() in ("surprise me", "anything", ""):
+            return {"message": "Hey! Got a minute to chat?"}
+        return {"message": f"Hey! Want to chat about {topic}?"}
