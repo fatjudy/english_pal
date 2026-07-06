@@ -378,6 +378,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
       setState(() {
         userMessage['correction'] = data['correction'];
+        userMessage['why'] = data['why'] ?? '';
         userMessage['checked'] = true;
         messages.add({'text': data['reply'], 'isUser': false});
         _isMiaTyping = false;
@@ -499,7 +500,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
   
-  Widget _correctionCard(String original, String correction) {
+  Widget _correctionCard(String original, String correction, String why) {
     final segs = _wordDiff(original, correction);
     final spans = <InlineSpan>[];
     for (final s in segs) {
@@ -563,28 +564,27 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 children: spans,
               ),
             ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                const Text(
-                  'removed',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.red,
-                    decoration: TextDecoration.lineThrough,
+            if (why.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.lightbulb_outline,
+                      size: 14, color: Colors.grey.shade600),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      why,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontStyle: FontStyle.italic,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 14),
-                Text(
-                  'added',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.green.shade700,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
@@ -666,8 +666,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       if (message['isUser'] == true &&
                           message['correction'] != null &&
                           message['correction'] != '')
-                        _correctionCard(
-                            message['text'], message['correction']),
+                        _correctionCard(message['text'],
+                            message['correction'], message['why'] ?? ''),
                       if (message['isUser'] == true &&
                           message['checked'] == true &&
                           message['correction'] == '')

@@ -71,6 +71,12 @@ The user is practicing English. Separately, look at the user's message:
   Make it sound natural and casual, but only fix the English; do not reply to
   it, answer it, or add new ideas.
 - If the message is already correct, set "correction" to an empty string.
+- When there is a correction, also fill the "why" field with a VERY short
+  explanation of ONLY the single most important fix — a few words, max ~6,
+  like "Past tense: go -> went", "Age uses 'be'", or "'good at', not 'good in'".
+  Do not explain more than one thing, and don't mention trivial typos or
+  spelling. Keep it simple and match the user's English level. If there is no
+  correction, set "why" to an empty string.
 Also keep a running summary of the conversation as your long-term memory. In
 the "summary" field, write an updated summary that combines the earlier summary
 (if one is provided) with any important new details from this exchange — names,
@@ -125,12 +131,19 @@ REPLY_TOOL = {
                                "their own voice, or an empty string if it is "
                                "already correct.",
             },
+            "why": {
+                "type": "string",
+                "description": "A VERY short reason for the fix (max ~6 words), "
+                               "e.g. 'Past tense: go -> went'. Empty string if "
+                               "there is no correction or the fix is a trivial "
+                               "typo/spelling.",
+            },
             "summary": {
                 "type": "string",
                 "description": "An updated running summary of the conversation.",
             },
         },
-        "required": ["reply", "correction", "summary"],
+        "required": ["reply", "correction", "why", "summary"],
     },
 }
 
@@ -182,6 +195,7 @@ def chat(request: ChatRequest):
             "reply": "Whoa, that's a lot to read at once! 😅 Could you send me a "
                      "shorter message so we can chat properly?",
             "correction": "",
+            "why": "",
             "summary": request.summary,
         }
 
@@ -216,6 +230,7 @@ def chat(request: ChatRequest):
         return {
             "reply": data.get("reply", ""),
             "correction": data.get("correction", ""),
+            "why": data.get("why", ""),
             "summary": data.get("summary", request.summary),
         }
     except Exception as e:
@@ -223,6 +238,7 @@ def chat(request: ChatRequest):
         return {
             "reply": "Sorry, I'm a bit busy right now — please try again in a moment!",
             "correction": "",
+            "why": "",
             "summary": request.summary,
         }
 
