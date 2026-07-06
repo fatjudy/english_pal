@@ -48,5 +48,8 @@ app.*.map.json
 backend/.venv/
 __pycache__/
 
+# Local SQLite database (dev only; real data lives in cloud Postgres later)
+*.db
+
 # Secrets — NEVER commit these (contains your Gemini API key)
 .env

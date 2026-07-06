@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
@@ -37,11 +38,92 @@ Future<void> initNotifications() async {
   await androidImpl?.requestNotificationsPermission();
 }
 
+Future<String> getDeviceId() async {
+  final prefs = await SharedPreferences.getInstance();
+  String? id = prefs.getString('deviceId');
+  if (id == null) {
+    final rng = Random.secure();
+    id = List.generate(32, (_) => rng.nextInt(16).toRadixString(16)).join();
+    await prefs.setString('deviceId', id);
+  }
+  return id;
+}
+
+// The one place the backend address lives. In Australia, change ONLY this
+// line to the Render URL (e.g. 'https://english-pal-backend.onrender.com').
+String get backendBase =>
+    kIsWeb ? 'http://127.0.0.1:8000' : 'http://10.0.2.2:8000';
+
+// --- cloud storage helpers (best-effort: offline just falls back to local) ---
+
+Future<void> saveProfileToCloud(Map<String, dynamic> profile) async {
+  try {
+    final deviceId = await getDeviceId();
+    await http
+        .post(
+          Uri.parse('$backendBase/profile/save'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'deviceId': deviceId, ...profile}),
+        )
+        .timeout(const Duration(seconds: 6));
+  } catch (e) {
+    // Offline or server down — the local copy is still saved, so ignore.
+  }
+}
+
+Future<void> saveChatToCloud(List messages, String summary) async {
+  try {
+    final deviceId = await getDeviceId();
+    await http
+        .post(
+          Uri.parse('$backendBase/chat/save'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(
+              {'deviceId': deviceId, 'messages': messages, 'summary': summary}),
+        )
+        .timeout(const Duration(seconds: 6));
+  } catch (e) {
+    // Offline — local copy still saved.
+  }
+}
+
+Future<Map<String, dynamic>?> loadProfileFromCloud() async {
+  try {
+    final deviceId = await getDeviceId();
+    final response = await http
+        .post(
+          Uri.parse('$backendBase/profile/load'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'deviceId': deviceId}),
+        )
+        .timeout(const Duration(seconds: 6));
+    final data = jsonDecode(response.body);
+    return data['profile']; // null if the server has nothing for us yet
+  } catch (e) {
+    return null; // offline — caller falls back to local
+  }
+}
+
+Future<Map<String, dynamic>?> loadChatFromCloud() async {
+  try {
+    final deviceId = await getDeviceId();
+    final response = await http
+        .post(
+          Uri.parse('$backendBase/chat/load'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'deviceId': deviceId}),
+        )
+        .timeout(const Duration(seconds: 6));
+    final data = jsonDecode(response.body);
+    return data['chat'];
+  } catch (e) {
+    return null;
+  }
+}
+
 Future<String> fetchOpener(String topic) async {
   final prefs = await SharedPreferences.getInstance();
-  final url = kIsWeb
-      ? 'http://127.0.0.1:8000/opener'
-      : 'http://10.0.2.2:8000/opener';
+  final url = '$backendBase/opener';
   try {
     final response = await http.post(
       Uri.parse(url),
@@ -168,8 +250,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   List<String> hobbies = [];
   List<String> topics = [];
   String level = 'Intermediate';
-  String get _backendUrl =>
-      kIsWeb ? 'http://127.0.0.1:8000/chat' : 'http://10.0.2.2:8000/chat';
+  String get _backendUrl => '$backendBase/chat';
   
   final List<Map<String, dynamic>> messages = [
     {'text': "Hi! I'm Mia. How's your day going?", 'isUser': false},
@@ -256,22 +337,45 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Future<void> _loadChat() async {
     final prefs = await SharedPreferences.getInstance();
-    palName = prefs.getString('palName') ?? 'Mia';
-    personality = prefs.getStringList('personality') ?? [];
-    hobbies = prefs.getStringList('hobbies') ?? [];
-    topics = prefs.getStringList('topics') ?? [];
-    level = prefs.getString('level') ?? 'Intermediate';
-    final savedMessages = prefs.getString('messages');
-    final savedSummary = prefs.getString('summary');
 
-    if (savedMessages != null) {
-      final decoded = jsonDecode(savedMessages) as List;
+    // Profile: prefer the cloud copy; fall back to what's on the phone.
+    final cloudProfile = await loadProfileFromCloud();
+    if (cloudProfile != null) {
+      palName = cloudProfile['palName'] ?? 'Mia';
+      personality = List<String>.from(cloudProfile['personality'] ?? []);
+      hobbies = List<String>.from(cloudProfile['hobbies'] ?? []);
+      topics = List<String>.from(cloudProfile['topics'] ?? []);
+      level = cloudProfile['level'] ?? 'Intermediate';
+    } else {
+      palName = prefs.getString('palName') ?? 'Mia';
+      personality = prefs.getStringList('personality') ?? [];
+      hobbies = prefs.getStringList('hobbies') ?? [];
+      topics = prefs.getStringList('topics') ?? [];
+      level = prefs.getString('level') ?? 'Intermediate';
+    }
+
+    // Chat history: prefer the cloud copy; fall back to local.
+    final cloudChat = await loadChatFromCloud();
+    List? messagesList;
+    String? savedSummary;
+    if (cloudChat != null) {
+      messagesList = cloudChat['messages'] as List;
+      savedSummary = cloudChat['summary'] as String;
+    } else {
+      final savedMessages = prefs.getString('messages');
+      if (savedMessages != null) {
+        messagesList = jsonDecode(savedMessages) as List;
+      }
+      savedSummary = prefs.getString('summary');
+    }
+
+    if (messagesList != null) {
+      final loaded = messagesList;
       setState(() {
         messages.clear();
-        messages.addAll(decoded.cast<Map<String, dynamic>>());
+        messages.addAll(loaded.cast<Map<String, dynamic>>());
       });
-    }
-    else {
+    } else {
       setState(() {
         messages.clear();
         messages.add({
@@ -304,6 +408,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('messages', jsonEncode(messages));
     await prefs.setString('summary', summary);
+    await saveChatToCloud(messages, summary);
   }
 
   Widget _messageBubble(String text, bool isUser) {
@@ -538,6 +643,13 @@ class _SetupScreenState extends State<SetupScreen> {
     await prefs.setStringList('hobbies', _selectedHobbies.toList());
     await prefs.setStringList('topics', _selectedTopics.toList());
     await prefs.setString('level', _selectedLevel);
+    await saveProfileToCloud({
+      'palName': _nameController.text,
+      'personality': _selectedPersonalities.toList(),
+      'hobbies': _selectedHobbies.toList(),
+      'topics': _selectedTopics.toList(),
+      'level': _selectedLevel,
+    });
   }
 
   @override

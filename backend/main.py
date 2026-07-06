@@ -7,7 +7,10 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
+import db
+
 load_dotenv()
+db.init_db()
 
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
@@ -187,3 +190,53 @@ Be natural and casual, just 1-2 sentences, at an English level of
         if topic.lower() in ("surprise me", "anything", ""):
             return {"message": "Hey! Got a minute to chat?"}
         return {"message": f"Hey! Want to chat about {topic}?"}
+
+
+# ---------- cloud storage (keyed by anonymous device_id) ----------
+
+class ProfileSave(BaseModel):
+    deviceId: str
+    palName: str = "Mia"
+    personality: list[str] = []
+    hobbies: list[str] = []
+    topics: list[str] = []
+    level: str = "Intermediate"
+
+class ChatSave(BaseModel):
+    deviceId: str
+    messages: list = []
+    summary: str = ""
+
+class DeviceRequest(BaseModel):
+    deviceId: str
+
+
+@app.post("/profile/save")
+def profile_save(request: ProfileSave):
+    db.save_profile(
+        request.deviceId,
+        request.palName,
+        request.personality,
+        request.hobbies,
+        request.topics,
+        request.level,
+    )
+    return {"ok": True}
+
+
+@app.post("/profile/load")
+def profile_load(request: DeviceRequest):
+    profile = db.load_profile(request.deviceId)
+    return {"profile": profile}
+
+
+@app.post("/chat/save")
+def chat_save(request: ChatSave):
+    db.save_chat(request.deviceId, request.messages, request.summary)
+    return {"ok": True}
+
+
+@app.post("/chat/load")
+def chat_load(request: DeviceRequest):
+    chat = db.load_chat(request.deviceId)
+    return {"chat": chat}
