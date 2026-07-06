@@ -12,6 +12,41 @@ import 'package:flutter_timezone/flutter_timezone.dart';
 final FlutterLocalNotificationsPlugin notificationsPlugin =
     FlutterLocalNotificationsPlugin();
 
+// Muted / dusty palette (see UI design spec).
+class AppColors {
+  static const blue = Color(0xFF93A8B5); // user bubbles, send button
+  static const blueDeep = Color(0xFF6E8593); // header background
+  static const sage = Color(0xFF849A8F); // bot bubbles, correction accent
+  static const sageDeep = Color(0xFF5C7268); // "Correction" label + check
+  static const apricot = Color(0xFFDAC4AD); // avatar fill, warm surface
+  static const rose = Color(0xFFBC8F8E); // reserved accent
+  static const moss = Color(0xFF8C9E7D); // reserved accent
+  static const pageBg = Color(0xFFF3ECE2); // app background
+  static const surface = Color(0xFFFFFFFF); // cards / bubble-adjacent surfaces
+
+  static const body = Color(0xFF3A3A38); // dark body text on light surfaces
+  static const subtitle = Color(0xFFDCE6EB); // header subtitle
+  static const inputBorder = Color(0xFFC7B8A6); // input field border tint
+  static const divider = Color(0xFFEDE4D8); // pale apricot divider
+  static const avatarIcon = Color(0xFF5A4634); // robot icon brown
+
+  // Correction signal colors (kept as universal red/green, muted to fit).
+  static const deletionRed = Color(0xFFA8443F);
+  static const correctionGreen = Color(0xFF4F7A3E);
+  static const tipAmber = Color(0xFFA88A5C);
+  static const tipText = Color(0xFF6B6862);
+}
+
+// The pal's profile picture. Swap assets/pal_avatar.png with your own image
+// (same filename) to change it — no code change needed.
+Widget palAvatar({double radius = 16}) {
+  return CircleAvatar(
+    radius: radius,
+    backgroundColor: AppColors.apricot,
+    backgroundImage: const AssetImage('assets/pal_avatar.png'),
+  );
+}
+
 Future<void> initNotifications() async {
   tzdata.initializeTimeZones();
   final String timeZoneName =
@@ -216,7 +251,46 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: AppColors.blue,
+      primary: AppColors.blue,
+      brightness: Brightness.light,
+    );
     return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: scheme,
+        scaffoldBackgroundColor: AppColors.pageBg,
+        appBarTheme: const AppBarTheme(
+          backgroundColor: AppColors.blueDeep,
+          foregroundColor: Colors.white,
+          centerTitle: false,
+          elevation: 0,
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            backgroundColor: AppColors.blue,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14)),
+            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 22),
+            textStyle:
+                const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          ),
+        ),
+        chipTheme: ChipThemeData(
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20)),
+          side: const BorderSide(color: AppColors.inputBorder),
+          selectedColor: AppColors.sage,
+        ),
+        listTileTheme: const ListTileThemeData(iconColor: AppColors.sageDeep),
+        floatingActionButtonTheme: const FloatingActionButtonThemeData(
+          backgroundColor: AppColors.blue,
+          foregroundColor: Colors.white,
+        ),
+      ),
       home: FutureBuilder<bool>(
         future: _isSetUp(),
         builder: (context, snapshot) {
@@ -487,16 +561,34 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Widget _messageBubble(String text, bool isUser) {
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.all(12),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: isUser ? Colors.blue.shade100 : Colors.grey.shade200,
-          borderRadius: BorderRadius.circular(16),
+    final maxW = MediaQuery.of(context).size.width * 0.82;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      child: Align(
+        alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxW),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: isUser ? AppColors.blue : AppColors.sage,
+              borderRadius: BorderRadius.only(
+                topLeft: const Radius.circular(14),
+                topRight: const Radius.circular(14),
+                bottomLeft: Radius.circular(isUser ? 14 : 4),
+                bottomRight: Radius.circular(isUser ? 4 : 14),
+              ),
+            ),
+            child: Text(
+              text,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                height: 1.45,
+              ),
+            ),
+          ),
         ),
-        child: Text(text),
       ),
     );
   }
@@ -513,7 +605,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           spans.add(TextSpan(
             text: '${s.text} ',
             style: const TextStyle(
-              color: Colors.red,
+              color: AppColors.deletionRed,
               decoration: TextDecoration.lineThrough,
             ),
           ));
@@ -521,85 +613,102 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         case _DiffOp.insert:
           spans.add(TextSpan(
             text: '${s.text} ',
-            style: TextStyle(
-              color: Colors.green.shade700,
-              fontWeight: FontWeight.bold,
+            style: const TextStyle(
+              color: AppColors.correctionGreen,
+              fontWeight: FontWeight.w500,
             ),
           ));
           break;
       }
     }
 
-    return Align(
-      alignment: Alignment.centerRight,
-      child: Container(
-        margin: const EdgeInsets.only(right: 12, bottom: 12, left: 48),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.green.shade50,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.green.shade200),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.auto_fix_high,
-                    size: 15, color: Colors.green.shade700),
-                const SizedBox(width: 4),
-                Text(
-                  'Correction',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.green.shade700,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            RichText(
-              text: TextSpan(
-                style: const TextStyle(color: Colors.black87, fontSize: 15),
-                children: spans,
+    final maxW = MediaQuery.of(context).size.width * 0.88;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxW),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: const BoxDecoration(
+              color: AppColors.surface,
+              border: Border(
+                left: BorderSide(color: AppColors.sage, width: 3),
+                top: BorderSide(color: AppColors.sage, width: 0.5),
+                right: BorderSide(color: AppColors.sage, width: 0.5),
+                bottom: BorderSide(color: AppColors.sage, width: 0.5),
               ),
             ),
-            if (why.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.lightbulb_outline,
-                      size: 14, color: Colors.grey.shade600),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      why,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: const [
+                    Icon(Icons.check, size: 15, color: AppColors.sageDeep),
+                    SizedBox(width: 4),
+                    Text(
+                      'Correction',
                       style: TextStyle(
                         fontSize: 12,
-                        fontStyle: FontStyle.italic,
-                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.sageDeep,
                       ),
                     ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text.rich(
+                  TextSpan(
+                    style: const TextStyle(
+                      color: AppColors.body,
+                      fontSize: 13.5,
+                      height: 1.55,
+                    ),
+                    children: spans,
+                  ),
+                ),
+                if (why.isNotEmpty) ...[
+                  const SizedBox(height: 7),
+                  const Divider(
+                      height: 1, thickness: 0.5, color: AppColors.divider),
+                  const SizedBox(height: 7),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.lightbulb_outline,
+                          size: 14, color: AppColors.tipAmber),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          why,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontStyle: FontStyle.italic,
+                            color: AppColors.tipText,
+                            height: 1.5,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
-              ),
-            ],
-          ],
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
   
-    Widget _looksGoodNote() {
+  Widget _looksGoodNote() {
     return const Align(
       alignment: Alignment.centerRight,
       child: Padding(
-        padding: EdgeInsets.only(right: 16, bottom: 8),
+        padding: EdgeInsets.only(right: 18, bottom: 8, top: 2),
         child: Text(
           '✓ Looks good!',
-          style: TextStyle(color: Colors.green, fontSize: 12),
+          style: TextStyle(color: AppColors.correctionGreen, fontSize: 12),
         ),
       ),
     );
@@ -617,17 +726,31 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     });
   }
   
-    Widget _typingIndicator() {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.all(12),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.grey.shade200,
-          borderRadius: BorderRadius.circular(16),
+  Widget _typingIndicator() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: const BoxDecoration(
+            color: AppColors.sage,
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(14),
+              topRight: Radius.circular(14),
+              bottomRight: Radius.circular(14),
+              bottomLeft: Radius.circular(4),
+            ),
+          ),
+          child: Text(
+            '$palName is typing…',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
         ),
-        child: const Text('Mia is typing…'),
       ),
     );
   }
@@ -636,7 +759,35 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('English Pal'),
+        toolbarHeight: 64,
+        titleSpacing: 12,
+        title: Row(
+          children: [
+            palAvatar(radius: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    palName,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const Text(
+                    'always here to help',
+                    style: TextStyle(color: AppColors.subtitle, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.settings),
@@ -680,22 +831,70 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ),
           ),
           if (_isMiaTyping) _typingIndicator(),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _controller,
-                  maxLength: 500,
-                  decoration: const InputDecoration(
-                    hintText: 'Type a message...',
-                  ),
+          Container(
+            decoration: const BoxDecoration(
+              color: AppColors.pageBg,
+              border: Border(
+                top: BorderSide(color: AppColors.apricot, width: 0.5),
+              ),
+            ),
+            child: SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _controller,
+                        maxLength: 500,
+                        minLines: 1,
+                        maxLines: 4,
+                        textInputAction: TextInputAction.send,
+                        onSubmitted: (_) => _sendMessage(),
+                        style: const TextStyle(
+                            color: AppColors.body, fontSize: 14),
+                        decoration: InputDecoration(
+                          hintText: 'Type in English…',
+                          hintStyle: TextStyle(color: Colors.grey.shade500),
+                          counterText: '',
+                          filled: true,
+                          fillColor: AppColors.surface,
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 10),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            borderSide: const BorderSide(
+                                color: AppColors.inputBorder, width: 0.5),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            borderSide: const BorderSide(
+                                color: AppColors.blueDeep, width: 1),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: Material(
+                        color: AppColors.blue,
+                        shape: const CircleBorder(),
+                        child: InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: _sendMessage,
+                          child: const Icon(Icons.send,
+                              color: Colors.white, size: 20),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              IconButton(
-                icon: const Icon(Icons.send),
-                onPressed: _sendMessage,
-              ),
-            ],
+            ),
           ),
         ],
       ),
@@ -776,7 +975,7 @@ class _SetupScreenState extends State<SetupScreen> {
   Widget _nextButton() {
     return Align(
       alignment: Alignment.centerRight,
-      child: ElevatedButton(
+      child: FilledButton(
         onPressed: () {
           _pageController.nextPage(
             duration: const Duration(milliseconds: 300),
@@ -871,7 +1070,7 @@ class _SetupScreenState extends State<SetupScreen> {
             const SizedBox(height: 32),
             SizedBox(
               width: double.infinity,
-              child: ElevatedButton(
+              child: FilledButton(
                 onPressed: () async {
                   await _saveSettings();
                   if (!context.mounted) return;
@@ -1025,7 +1224,7 @@ class _EditPalScreenState extends State<EditPalScreen> {
                   const SizedBox(height: 32),
                   SizedBox(
                     width: double.infinity,
-                    child: ElevatedButton(
+                    child: FilledButton(
                       onPressed: () async {
                         await _save();
                         if (!context.mounted) return;
