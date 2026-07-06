@@ -141,13 +141,7 @@ class OpenerRequest(BaseModel):
     palName: str = "Mia"
     personality: list[str] = []
     hobbies: list[str] = []
-    level: str = "Intermediate"
-
-class OpenerRequest(BaseModel):
-    topic: str
-    palName: str = "Mia"
-    personality: list[str] = []
-    hobbies: list[str] = []
+    topics: list[str] = []
     level: str = "Intermediate"
 
 @app.post("/opener")
@@ -155,9 +149,21 @@ def opener(request: OpenerRequest):
     name = request.palName or "Mia"
     personality = ", ".join(request.personality) or "warm and friendly"
     hobbies = ", ".join(request.hobbies) or "lots of things"
+    interests = ", ".join(request.topics)
     topic = request.topic or "anything"
     if topic.lower() in ("surprise me", "anything", ""):
-        topic_line = "Pick any fun topic yourself — something you like or something popular right now."
+        if interests:
+            topic_line = (
+                f"Pick ONE specific topic to talk about — choose from your friend's "
+                f"favourite topics ({interests}) or from your own hobbies ({hobbies}). "
+                f"Don't ask what they want to talk about; jump straight into that one topic."
+            )
+        else:
+            topic_line = (
+                f"Pick ONE specific topic to talk about — something from your own hobbies "
+                f"({hobbies}) or something popular right now. Don't ask what they want to "
+                f"talk about; jump straight into that one topic."
+            )
     else:
         topic_line = f'Start a conversation about "{topic}".'
     instruction = f"""

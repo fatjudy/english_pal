@@ -20,7 +20,10 @@ Future<void> initNotifications() async {
       AndroidInitializationSettings('@mipmap/ic_launcher');
   const InitializationSettings settings =
       InitializationSettings(android: androidSettings);
-  await notificationsPlugin.initialize(settings: settings);
+  await notificationsPlugin.initialize(
+    settings: settings,
+    onDidReceiveNotificationResponse: _onNotificationTap,
+  );
   const AndroidNotificationChannel channel = AndroidNotificationChannel(
     'english_pal_channel',
     'Chat reminders',
@@ -48,6 +51,7 @@ Future<String> fetchOpener(String topic) async {
         'palName': prefs.getString('palName') ?? 'Mia',
         'personality': prefs.getStringList('personality') ?? [],
         'hobbies': prefs.getStringList('hobbies') ?? [],
+        'topics': prefs.getStringList('topics') ?? [],
         'level': prefs.getString('level') ?? 'Intermediate',
       }),
     );
@@ -96,13 +100,27 @@ Future<void> scheduleNotification(int id, int hour, int minute,
     title: palName,
     body: opener,
     matchDateTimeComponents: DateTimeComponents.time,
-    payload: topic,
+    payload: opener,
   );
+}
+
+Future<void> _onNotificationTap(NotificationResponse response) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString('pending_opener', response.payload ?? '');
 }
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initNotifications();
+
+  final launchDetails =
+      await notificationsPlugin.getNotificationAppLaunchDetails();
+  if (launchDetails?.didNotificationLaunchApp ?? false) {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+        'pending_opener', launchDetails!.notificationResponse?.payload ?? '');
+  }
+
   runApp(const MyApp());
 }
 
@@ -140,7 +158,7 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController(); 
   bool _isMiaTyping = false;
@@ -160,7 +178,21 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadChat();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkPendingOpener();
+    }
   }
 
   Future<void> _sendMessage() async {
@@ -251,7 +283,21 @@ class _ChatScreenState extends State<ChatScreen> {
     if (savedSummary != null) {
       summary = savedSummary;
     }
+    await _checkPendingOpener();
     _scrollToBottom();
+  }
+
+  Future<void> _checkPendingOpener() async {
+    final prefs = await SharedPreferences.getInstance();
+    final pending = prefs.getString('pending_opener');
+    if (pending != null && pending.isNotEmpty) {
+      setState(() {
+        messages.add({'text': pending, 'isUser': false});
+      });
+      await prefs.remove('pending_opener');
+      await _saveChat();
+      _scrollToBottom();
+    }
   }
 
   Future<void> _saveChat() async {
