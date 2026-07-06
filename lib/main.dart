@@ -391,6 +391,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _scrollToBottom();
   }
 
+  // Re-read the pal's profile (e.g. after the user edits it in Settings) so the
+  // chat uses the new name/personality right away.
+  Future<void> _loadProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      palName = prefs.getString('palName') ?? 'Mia';
+      personality = prefs.getStringList('personality') ?? [];
+      hobbies = prefs.getStringList('hobbies') ?? [];
+      topics = prefs.getStringList('topics') ?? [];
+      level = prefs.getString('level') ?? 'Intermediate';
+    });
+  }
+
   Future<void> _checkPendingOpener() async {
     final prefs = await SharedPreferences.getInstance();
     final pending = prefs.getString('pending_opener');
@@ -490,11 +503,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           IconButton(
             icon: const Icon(Icons.settings),
             tooltip: 'Settings',
-            onPressed: () {
-              Navigator.push(
+            onPressed: () async {
+              await Navigator.push(
                 context,
                 MaterialPageRoute(builder: (context) => const SettingsScreen()),
               );
+              await _loadProfile();
             },
           ),
         ],
@@ -549,6 +563,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 }
 
+// Shared option lists, used by both the setup wizard and the edit screen so
+// they can never drift apart.
+const List<String> kPersonalityOptions = [
+  'Friendly', 'Funny', 'Calm & Patient', 'Encouraging', 'Curious',
+  'Witty', 'Chatty', 'Gentle', 'Enthusiastic', 'Thoughtful',
+];
+const List<String> kHobbyOptions = [
+  'Sports', 'Music', 'Movies & TV', 'Gaming', 'Cooking', 'Travel',
+  'Books', 'Art', 'Technology', 'Nature', 'Fitness', 'Pets',
+  'Photography', 'Science',
+];
+const List<String> kTopicOptions = [
+  'Daily life', 'Work/Career', 'Travel English', 'Job interviews',
+  'Small talk', 'Hobbies', 'News', 'Food', 'Culture', 'Studying abroad',
+  'Shopping', 'Health',
+];
+const List<String> kLevelOptions = ['Beginner', 'Intermediate', 'Advanced'];
+
 class SetupScreen extends StatefulWidget {
   const SetupScreen({super.key});
 
@@ -559,24 +591,13 @@ class SetupScreen extends StatefulWidget {
 class _SetupScreenState extends State<SetupScreen> {
   final TextEditingController _nameController = TextEditingController();
   final PageController _pageController = PageController();
-  final List<String> _personalityOptions = [
-    'Friendly', 'Funny', 'Calm & Patient', 'Encouraging', 'Curious',
-    'Witty', 'Chatty', 'Gentle', 'Enthusiastic', 'Thoughtful',
-  ];
+  final List<String> _personalityOptions = kPersonalityOptions;
   final Set<String> _selectedPersonalities = {};
 
-  final List<String> _hobbyOptions = [
-    'Sports', 'Music', 'Movies & TV', 'Gaming', 'Cooking', 'Travel',
-    'Books', 'Art', 'Technology', 'Nature', 'Fitness', 'Pets',
-    'Photography', 'Science',
-  ];
+  final List<String> _hobbyOptions = kHobbyOptions;
   final Set<String> _selectedHobbies = {};
 
-  final List<String> _topicOptions = [
-    'Daily life', 'Work/Career', 'Travel English', 'Job interviews',
-    'Small talk', 'Hobbies', 'News', 'Food', 'Culture', 'Studying abroad',
-    'Shopping', 'Health',
-  ];
+  final List<String> _topicOptions = kTopicOptions;
   final Set<String> _selectedTopics = {};
 
   String _selectedLevel = 'Intermediate';
@@ -695,7 +716,7 @@ class _SetupScreenState extends State<SetupScreen> {
             Wrap(
               spacing: 8,
               children: [
-                for (final level in ['Beginner', 'Intermediate', 'Advanced'])
+                for (final level in kLevelOptions)
                   ChoiceChip(
                     label: Text(level),
                     selected: _selectedLevel == level,
@@ -732,6 +753,160 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 }
 
+class EditPalScreen extends StatefulWidget {
+  const EditPalScreen({super.key});
+
+  @override
+  State<EditPalScreen> createState() => _EditPalScreenState();
+}
+
+class _EditPalScreenState extends State<EditPalScreen> {
+  final TextEditingController _nameController = TextEditingController();
+  final Set<String> _selectedPersonalities = {};
+  final Set<String> _selectedHobbies = {};
+  final Set<String> _selectedTopics = {};
+  String _selectedLevel = 'Intermediate';
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _nameController.text = prefs.getString('palName') ?? '';
+      _selectedPersonalities.addAll(prefs.getStringList('personality') ?? []);
+      _selectedHobbies.addAll(prefs.getStringList('hobbies') ?? []);
+      _selectedTopics.addAll(prefs.getStringList('topics') ?? []);
+      _selectedLevel = prefs.getString('level') ?? 'Intermediate';
+      _loading = false;
+    });
+  }
+
+  Future<void> _save() async {
+    final prefs = await SharedPreferences.getInstance();
+    final name = _nameController.text.trim().isEmpty
+        ? 'Mia'
+        : _nameController.text.trim();
+    await prefs.setString('palName', name);
+    await prefs.setStringList('personality', _selectedPersonalities.toList());
+    await prefs.setStringList('hobbies', _selectedHobbies.toList());
+    await prefs.setStringList('topics', _selectedTopics.toList());
+    await prefs.setString('level', _selectedLevel);
+    await saveProfileToCloud({
+      'palName': name,
+      'personality': _selectedPersonalities.toList(),
+      'hobbies': _selectedHobbies.toList(),
+      'topics': _selectedTopics.toList(),
+      'level': _selectedLevel,
+    });
+  }
+
+  Widget _chipSection(String label, List<String> options, Set<String> selected) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            for (final option in options)
+              FilterChip(
+                label: Text(option),
+                selected: selected.contains(option),
+                onSelected: (isSelected) {
+                  setState(() {
+                    if (isSelected) {
+                      selected.add(option);
+                    } else {
+                      selected.remove(option);
+                    }
+                  });
+                },
+              ),
+          ],
+        ),
+        const SizedBox(height: 24),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Edit your pal')),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text("Your pal's name:",
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _nameController,
+                    maxLength: 20,
+                    decoration: const InputDecoration(
+                      hintText: 'e.g. Mia, Leo, Aria...',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _chipSection(
+                      'Personality:', kPersonalityOptions, _selectedPersonalities),
+                  _chipSection('Hobbies:', kHobbyOptions, _selectedHobbies),
+                  _chipSection(
+                      'Topics to talk about:', kTopicOptions, _selectedTopics),
+                  const Text('English level:',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      for (final level in kLevelOptions)
+                        ChoiceChip(
+                          label: Text(level),
+                          selected: _selectedLevel == level,
+                          onSelected: (isSelected) {
+                            setState(() {
+                              _selectedLevel = level;
+                            });
+                          },
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 32),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        await _save();
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Saved!')),
+                        );
+                        Navigator.pop(context);
+                      },
+                      child: const Padding(
+                        padding: EdgeInsets.all(14),
+                        child: Text('Save', style: TextStyle(fontSize: 16)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+    );
+  }
+}
+
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
@@ -741,6 +916,17 @@ class SettingsScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         children: [
+          ListTile(
+            leading: const Icon(Icons.person),
+            title: const Text('Edit your pal'),
+            subtitle: const Text('Name, personality, hobbies, topics, level'),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const EditPalScreen()),
+              );
+            },
+          ),
           ListTile(
             leading: const Icon(Icons.schedule),
             title: const Text('Scheduled messages'),
