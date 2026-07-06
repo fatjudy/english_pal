@@ -232,6 +232,66 @@ class MyApp extends StatelessWidget {
   }
 }
 
+// ---- word-level diff for showing corrections (track-changes style) ----
+
+enum _DiffOp { equal, delete, insert }
+
+class _DiffSeg {
+  final _DiffOp op;
+  final String text;
+  _DiffSeg(this.op, this.text);
+}
+
+// Normalize a word for comparison: lowercase, drop punctuation, so that
+// "yesterday." and "Yesterday" count as the same word.
+String _normWord(String w) => w.toLowerCase().replaceAll(RegExp(r'[^\w]'), '');
+
+// Compare the original and corrected sentences word by word using a classic
+// longest-common-subsequence diff. Returns a list of segments marked equal,
+// delete (in original only) or insert (in correction only).
+List<_DiffSeg> _wordDiff(String oldText, String newText) {
+  final a = oldText.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+  final b = newText.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+  final n = a.length, m = b.length;
+
+  // dp[i][j] = length of LCS of a[i:] and b[j:]
+  final dp = List.generate(n + 1, (_) => List<int>.filled(m + 1, 0));
+  for (var i = n - 1; i >= 0; i--) {
+    for (var j = m - 1; j >= 0; j--) {
+      if (_normWord(a[i]) == _normWord(b[j])) {
+        dp[i][j] = dp[i + 1][j + 1] + 1;
+      } else {
+        dp[i][j] = dp[i + 1][j] >= dp[i][j + 1] ? dp[i + 1][j] : dp[i][j + 1];
+      }
+    }
+  }
+
+  final segs = <_DiffSeg>[];
+  var i = 0, j = 0;
+  while (i < n && j < m) {
+    if (_normWord(a[i]) == _normWord(b[j])) {
+      segs.add(_DiffSeg(_DiffOp.equal, b[j]));
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      segs.add(_DiffSeg(_DiffOp.delete, a[i]));
+      i++;
+    } else {
+      segs.add(_DiffSeg(_DiffOp.insert, b[j]));
+      j++;
+    }
+  }
+  while (i < n) {
+    segs.add(_DiffSeg(_DiffOp.delete, a[i]));
+    i++;
+  }
+  while (j < m) {
+    segs.add(_DiffSeg(_DiffOp.insert, b[j]));
+    j++;
+  }
+  return segs;
+}
+
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
 
@@ -439,17 +499,94 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
   
-  Widget _correctionCard(String correction) {
+  Widget _correctionCard(String original, String correction) {
+    final segs = _wordDiff(original, correction);
+    final spans = <InlineSpan>[];
+    for (final s in segs) {
+      switch (s.op) {
+        case _DiffOp.equal:
+          spans.add(TextSpan(text: '${s.text} '));
+          break;
+        case _DiffOp.delete:
+          spans.add(TextSpan(
+            text: '${s.text} ',
+            style: const TextStyle(
+              color: Colors.red,
+              decoration: TextDecoration.lineThrough,
+            ),
+          ));
+          break;
+        case _DiffOp.insert:
+          spans.add(TextSpan(
+            text: '${s.text} ',
+            style: TextStyle(
+              color: Colors.green.shade700,
+              fontWeight: FontWeight.bold,
+            ),
+          ));
+          break;
+      }
+    }
+
     return Align(
       alignment: Alignment.centerRight,
       child: Container(
-        margin: const EdgeInsets.only(right: 12, bottom: 12),
+        margin: const EdgeInsets.only(right: 12, bottom: 12, left: 48),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: Colors.green.shade50,
           borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.green.shade200),
         ),
-        child: Text('Correction: $correction'),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.auto_fix_high,
+                    size: 15, color: Colors.green.shade700),
+                const SizedBox(width: 4),
+                Text(
+                  'Correction',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.green.shade700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            RichText(
+              text: TextSpan(
+                style: const TextStyle(color: Colors.black87, fontSize: 15),
+                children: spans,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Text(
+                  'removed',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.red,
+                    decoration: TextDecoration.lineThrough,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Text(
+                  'added',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.green.shade700,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -529,7 +666,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       if (message['isUser'] == true &&
                           message['correction'] != null &&
                           message['correction'] != '')
-                        _correctionCard(message['correction']),
+                        _correctionCard(
+                            message['text'], message['correction']),
                       if (message['isUser'] == true &&
                           message['checked'] == true &&
                           message['correction'] == '')
