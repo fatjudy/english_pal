@@ -100,6 +100,16 @@ def init_db():
         )
         """
     )
+    # Add the correction columns to messages (works for both fresh and older
+    # databases — ALTER TABLE only runs for columns that don't exist yet).
+    msg_cols = [r["name"]
+                for r in conn.execute("PRAGMA table_info(messages)").fetchall()]
+    for col, ddl in (("corrected", "TEXT DEFAULT ''"),
+                     ("why", "TEXT DEFAULT ''"),
+                     ("understood", "INTEGER DEFAULT 1"),
+                     ("sender_pref", "INTEGER DEFAULT 1")):
+        if col not in msg_cols:
+            conn.execute(f"ALTER TABLE messages ADD COLUMN {col} {ddl}")
     conn.commit()
     conn.close()
 
@@ -224,6 +234,17 @@ def get_user_by_id(user_id):
     ).fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+def update_partner_view_pref(user_id, pref):
+    """Set what this user's chat partners see of their messages (1/2/3)."""
+    conn = get_conn()
+    conn.execute(
+        "UPDATE users SET partner_view_pref = ? WHERE user_id = ?",
+        (pref, user_id),
+    )
+    conn.commit()
+    conn.close()
 
 
 # ---------- sessions (login tokens) ----------
@@ -389,19 +410,37 @@ def get_conversation(conversation_id):
     return dict(row) if row else None
 
 
-def add_message(conversation_id, sender_id, text):
+def add_message(conversation_id, sender_id, text, corrected="", why="",
+                understood=True, sender_pref=1):
     conn = get_conn()
     created = datetime.utcnow().isoformat()
     cur = conn.execute(
-        "INSERT INTO messages (conversation_id, sender_id, text, created_at) "
-        "VALUES (?, ?, ?, ?)",
-        (conversation_id, sender_id, text, created),
+        "INSERT INTO messages (conversation_id, sender_id, text, corrected, "
+        "why, understood, sender_pref, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (conversation_id, sender_id, text, corrected, why,
+         1 if understood else 0, sender_pref, created),
     )
     conn.commit()
     msg_id = cur.lastrowid
     conn.close()
     return {"id": msg_id, "senderId": sender_id, "text": text,
-            "createdAt": created}
+            "corrected": corrected, "why": why, "understood": understood,
+            "senderPref": sender_pref, "createdAt": created}
+
+
+def _message_row(r):
+    return {
+        "id": r["id"],
+        "senderId": r["sender_id"],
+        "text": r["text"],
+        "corrected": r["corrected"] or "",
+        "why": r["why"] or "",
+        "understood": bool(r["understood"]) if r["understood"] is not None
+        else True,
+        "senderPref": r["sender_pref"] if r["sender_pref"] is not None else 1,
+        "createdAt": r["created_at"],
+    }
 
 
 def get_messages(conversation_id, since_id=0):
@@ -413,8 +452,4 @@ def get_messages(conversation_id, since_id=0):
         (conversation_id, since_id),
     ).fetchall()
     conn.close()
-    return [
-        {"id": r["id"], "senderId": r["sender_id"], "text": r["text"],
-         "createdAt": r["created_at"]}
-        for r in rows
-    ]
+    return [_message_row(r) for r in rows]

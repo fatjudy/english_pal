@@ -12,7 +12,6 @@ import 'onboarding_screen.dart';
 import 'login_screen.dart';
 import 'setup_flow_screen.dart';
 import 'email_auth_screen.dart';
-import 'friends_screen.dart';
 import 'chats_list_screen.dart';
 
 final FlutterLocalNotificationsPlugin notificationsPlugin =
@@ -246,6 +245,65 @@ Future<Map<String, dynamic>> fetchPartnerMessages(int conversationId, int sinceI
     _friendsPost('/message/fetch',
         {'conversationId': conversationId, 'sinceId': sinceId});
 
+// --- partner-view preference (what your chat partner sees of your messages) --
+// 1 = your original + your correction card, 2 = corrected sentence only,
+// 3 = original only. Sender always still sees their own card either way.
+
+Future<int> loadPartnerViewPref() async {
+  final prefs = await SharedPreferences.getInstance();
+  return prefs.getInt('partnerViewPref') ?? 1;
+}
+
+// Saves the preference on the server (stamped onto future messages) and mirrors
+// it locally. Returns the backend reply.
+Future<Map<String, dynamic>> setPartnerViewPref(int pref) async {
+  final res = await _friendsPost('/prefs/partner-view', {'pref': pref});
+  if (res['ok'] == true) {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('partnerViewPref', pref);
+  }
+  return res;
+}
+
+// --- saved corrections storage (shared by the AI chat and partner chat) ----
+
+String correctionKey(String original, String correction) =>
+    '$original|||$correction';
+
+Future<Set<String>> loadSavedCorrectionKeys() async {
+  final prefs = await SharedPreferences.getInstance();
+  final List list =
+      jsonDecode(prefs.getString('saved_corrections') ?? '[]') as List;
+  return {
+    for (final e in list)
+      correctionKey(e['original'] as String, e['correction'] as String),
+  };
+}
+
+// Add or remove a correction in the on-device saved list. Returns true if it is
+// now saved (false if it was just removed).
+Future<bool> toggleSavedCorrection(
+    String original, String correction, String why) async {
+  final prefs = await SharedPreferences.getInstance();
+  final List<dynamic> list =
+      jsonDecode(prefs.getString('saved_corrections') ?? '[]') as List<dynamic>;
+  final already = list.any(
+      (e) => e['original'] == original && e['correction'] == correction);
+  if (already) {
+    list.removeWhere(
+        (e) => e['original'] == original && e['correction'] == correction);
+  } else {
+    list.add({
+      'original': original,
+      'correction': correction,
+      'why': why,
+      'savedAt': DateTime.now().toIso8601String(),
+    });
+  }
+  await prefs.setString('saved_corrections', jsonEncode(list));
+  return !already;
+}
+
 Future<String> fetchOpener(String topic) async {
   final prefs = await SharedPreferences.getInstance();
   final url = '$backendBase/opener';
@@ -478,12 +536,12 @@ class MyApp extends StatelessWidget {
 
 // ---- word-level diff for showing corrections (track-changes style) ----
 
-enum _DiffOp { equal, delete, insert }
+enum DiffOp { equal, delete, insert }
 
-class _DiffSeg {
-  final _DiffOp op;
+class DiffSeg {
+  final DiffOp op;
   final String text;
-  _DiffSeg(this.op, this.text);
+  DiffSeg(this.op, this.text);
 }
 
 // Normalize a word for comparison: lowercase, drop punctuation, so that
@@ -493,7 +551,7 @@ String _normWord(String w) => w.toLowerCase().replaceAll(RegExp(r'[^\w]'), '');
 // Compare the original and corrected sentences word by word using a classic
 // longest-common-subsequence diff. Returns a list of segments marked equal,
 // delete (in original only) or insert (in correction only).
-List<_DiffSeg> _wordDiff(String oldText, String newText) {
+List<DiffSeg> wordDiff(String oldText, String newText) {
   final a = oldText.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
   final b = newText.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
   final n = a.length, m = b.length;
@@ -510,27 +568,27 @@ List<_DiffSeg> _wordDiff(String oldText, String newText) {
     }
   }
 
-  final segs = <_DiffSeg>[];
+  final segs = <DiffSeg>[];
   var i = 0, j = 0;
   while (i < n && j < m) {
     if (_normWord(a[i]) == _normWord(b[j])) {
-      segs.add(_DiffSeg(_DiffOp.equal, b[j]));
+      segs.add(DiffSeg(DiffOp.equal, b[j]));
       i++;
       j++;
     } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      segs.add(_DiffSeg(_DiffOp.delete, a[i]));
+      segs.add(DiffSeg(DiffOp.delete, a[i]));
       i++;
     } else {
-      segs.add(_DiffSeg(_DiffOp.insert, b[j]));
+      segs.add(DiffSeg(DiffOp.insert, b[j]));
       j++;
     }
   }
   while (i < n) {
-    segs.add(_DiffSeg(_DiffOp.delete, a[i]));
+    segs.add(DiffSeg(DiffOp.delete, a[i]));
     i++;
   }
   while (j < m) {
-    segs.add(_DiffSeg(_DiffOp.insert, b[j]));
+    segs.add(DiffSeg(DiffOp.insert, b[j]));
     j++;
   }
   return segs;
@@ -832,15 +890,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Widget _correctionCard(String original, String correction, String why) {
-    final segs = _wordDiff(original, correction);
+    final segs = wordDiff(original, correction);
     final bool saved = _savedKeys.contains(_correctionKey(original, correction));
     final spans = <InlineSpan>[];
     for (final s in segs) {
       switch (s.op) {
-        case _DiffOp.equal:
+        case DiffOp.equal:
           spans.add(TextSpan(text: '${s.text} '));
           break;
-        case _DiffOp.delete:
+        case DiffOp.delete:
           spans.add(TextSpan(
             text: '${s.text} ',
             style: const TextStyle(
@@ -849,7 +907,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ),
           ));
           break;
-        case _DiffOp.insert:
+        case DiffOp.insert:
           spans.add(TextSpan(
             text: '${s.text} ',
             style: const TextStyle(
@@ -1357,13 +1415,14 @@ class SettingsScreen extends StatelessWidget {
             },
           ),
           ListTile(
-            leading: const Icon(Icons.people_outline),
-            title: const Text('Friends'),
-            subtitle: const Text('Chat with a friend and correct each other'),
+            leading: const Icon(Icons.visibility_outlined),
+            title: const Text('What friends see'),
+            subtitle: const Text('Choose what a friend sees when you message'),
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const FriendsScreen()),
+                MaterialPageRoute(
+                    builder: (context) => const PartnerViewScreen()),
               );
             },
           ),
@@ -1414,6 +1473,206 @@ class SettingsScreen extends StatelessWidget {
   }
 }
 
+// Lets the user choose what their chat partner sees of the messages they send.
+// The user always still sees their own private correction card regardless.
+class PartnerViewScreen extends StatefulWidget {
+  const PartnerViewScreen({super.key});
+
+  @override
+  State<PartnerViewScreen> createState() => _PartnerViewScreenState();
+}
+
+class _PartnerViewScreenState extends State<PartnerViewScreen> {
+  int _pref = 1;
+  bool _loading = true;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final p = await loadPartnerViewPref();
+    if (!mounted) return;
+    setState(() {
+      _pref = p;
+      _loading = false;
+    });
+  }
+
+  Future<void> _choose(int pref) async {
+    if (_saving) return;
+    setState(() {
+      _pref = pref;
+      _saving = true;
+    });
+    final res = await setPartnerViewPref(pref);
+    if (!mounted) return;
+    setState(() => _saving = false);
+    if (res['ok'] != true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text((res['error'] ?? 'Could not save.') as String)),
+      );
+    }
+  }
+
+  Widget _option(int value, String title, String subtitle) {
+    final selected = _pref == value;
+    return ListTile(
+      onTap: _saving ? null : () => _choose(value),
+      leading: Icon(
+        selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+        color: selected ? AppColors.navy : AppColors.tipText,
+      ),
+      title: Text(title),
+      subtitle: Text(subtitle),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('What friends see')),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(
+              children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text(
+                    'When you send a message in a friend chat, this is what your '
+                    'friend sees. You always still see your own correction card.',
+                    style: TextStyle(color: AppColors.tipText, height: 1.4),
+                  ),
+                ),
+                _option(1, 'Original + correction card',
+                    'Your friend sees what you typed and your correction.'),
+                _mode1Preview(),
+                _option(2, 'Corrected only',
+                    'Your friend sees just your polished sentence.'),
+                _option(3, 'Original only',
+                    'Your friend sees only what you typed, no correction.'),
+              ],
+            ),
+    );
+  }
+
+  // A small "this is what it looks like" example under the first option — a
+  // sample incoming bubble plus the correction card, built from the same styling
+  // the real chat uses. Only mode 1 shows a card, so only this option needs one.
+  Widget _mode1Preview() {
+    const original = 'I go beach yesterday';
+    const corrected = 'I went to the beach yesterday';
+    const why = 'Past tense';
+    final spans = <InlineSpan>[];
+    for (final s in wordDiff(original, corrected)) {
+      switch (s.op) {
+        case DiffOp.equal:
+          spans.add(TextSpan(text: '${s.text} '));
+          break;
+        case DiffOp.delete:
+          spans.add(TextSpan(
+            text: '${s.text} ',
+            style: const TextStyle(
+                color: AppColors.deletionRed,
+                decoration: TextDecoration.lineThrough),
+          ));
+          break;
+        case DiffOp.insert:
+          spans.add(TextSpan(
+            text: '${s.text} ',
+            style: const TextStyle(
+                color: AppColors.correctionGreen,
+                fontWeight: FontWeight.w600),
+          ));
+          break;
+      }
+    }
+    return Container(
+      margin: const EdgeInsets.fromLTRB(56, 0, 16, 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.pageBg,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Your friend sees:',
+              style: TextStyle(fontSize: 12, color: AppColors.tipText)),
+          const SizedBox(height: 6),
+          // sample incoming bubble (your message, as the friend receives it)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.gold,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Text(original,
+                  style: TextStyle(color: AppColors.body, fontSize: 14)),
+            ),
+          ),
+          const SizedBox(height: 4),
+          // sample correction card
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: const BoxDecoration(
+              color: AppColors.white,
+              border: Border(
+                left: BorderSide(color: AppColors.gold, width: 3),
+                top: BorderSide(color: AppColors.borderTint, width: 0.5),
+                right: BorderSide(color: AppColors.borderTint, width: 0.5),
+                bottom: BorderSide(color: AppColors.borderTint, width: 0.5),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.check, size: 13, color: AppColors.navy),
+                    SizedBox(width: 4),
+                    Text('CORRECTION',
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.5,
+                            color: AppColors.navy)),
+                  ],
+                ),
+                const SizedBox(height: 5),
+                Text.rich(TextSpan(
+                    style: const TextStyle(
+                        color: AppColors.body, fontSize: 14, height: 1.5),
+                    children: spans)),
+                const SizedBox(height: 5),
+                const Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.lightbulb_outline,
+                        size: 13, color: AppColors.tipIcon),
+                    SizedBox(width: 4),
+                    Text(why,
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontStyle: FontStyle.italic,
+                            color: AppColors.tipText)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class SavedCorrectionsScreen extends StatefulWidget {
   const SavedCorrectionsScreen({super.key});
 
@@ -1452,14 +1711,14 @@ class _SavedCorrectionsScreenState extends State<SavedCorrectionsScreen> {
 
   // Build the same colored track-changes spans the chat correction card uses.
   List<InlineSpan> _diffSpans(String original, String correction) {
-    final segs = _wordDiff(original, correction);
+    final segs = wordDiff(original, correction);
     final spans = <InlineSpan>[];
     for (final s in segs) {
       switch (s.op) {
-        case _DiffOp.equal:
+        case DiffOp.equal:
           spans.add(TextSpan(text: '${s.text} '));
           break;
-        case _DiffOp.delete:
+        case DiffOp.delete:
           spans.add(TextSpan(
             text: '${s.text} ',
             style: const TextStyle(
@@ -1468,7 +1727,7 @@ class _SavedCorrectionsScreenState extends State<SavedCorrectionsScreen> {
             ),
           ));
           break;
-        case _DiffOp.insert:
+        case DiffOp.insert:
           spans.add(TextSpan(
             text: '${s.text} ',
             style: const TextStyle(

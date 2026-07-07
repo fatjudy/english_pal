@@ -170,9 +170,16 @@ Authenticated endpoints take the token; the backend resolves it to a `user_id`.
   tables; `/conversation/open`, `/message/send`, `/message/fetch`;
   `partner_chat_screen.dart` = real chat with left/right bubbles and 2s polling.
   Plain text only (no corrections yet). Verified in-app.
-- **Phase 3 — Corrections:** correction-only call; store original + corrected;
-  render the sender's private card.
-- **Phase 4 — Partner-view preference:** the 1/2/3 setting; fetch respects it.
+- **Phase 3 — Corrections:** ✅ done. `generate_correction` (correction-only
+  Claude call); `messages` gains `corrected`/`why`/`understood`; the partner
+  chat renders the sender's private correction card (with a bookmark → shared
+  Saved corrections). Verified in-app.
+- **Phase 4 — Partner-view preference:** ✅ done. `messages.sender_pref` snapshots
+  the sender's `partner_view_pref` at send time; `/prefs/partner-view` sets it;
+  `/message/fetch` shapes each row for the viewer (own = full; partner's = mode
+  1 original+card / 2 corrected only / 3 original only). Settings → "What your
+  chat partner sees" (3-option screen); partner chat renders a shared card
+  left-aligned for the friend. Verified end-to-end (all 3 modes) via the API.
 - **Phase 5 — Polish:** unread badges, delivered state, empty / partner-left
   edge cases. _(Conversation list already built early — see below.)_
 

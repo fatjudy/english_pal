@@ -728,6 +728,87 @@ def friends_list(request: TokenRequest):
     }
 
 
+# ---------- correction-only coaching (for partner chat) ----------
+
+# Claude returns just a correction via this tool (no reply, no summary) — the
+# reply comes from the human friend, not the AI.
+CORRECTION_TOOL = {
+    "name": "correct_english",
+    "description": "Give an English correction for the user's chat message.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "correction": {
+                "type": "string",
+                "description": "A natural, native-sounding rewrite of the "
+                               "message in the user's own voice, or an empty "
+                               "string if it is already correct and natural.",
+            },
+            "why": {
+                "type": "string",
+                "description": "A VERY short reason (max ~6 words), e.g. "
+                               "'Past tense: go -> went'. Empty if no correction.",
+            },
+            "understood": {
+                "type": "boolean",
+                "description": "true if it is an identifiable attempt at English; "
+                               "false if gibberish or another language.",
+            },
+        },
+        "required": ["correction", "why", "understood"],
+    },
+}
+
+CORRECTION_SYSTEM = """
+You are a friendly English coach. The user sent a chat message to a friend. Help
+them sound like a natural native speaker — not just fix grammar.
+
+- Set "understood" to true if the message is an identifiable attempt to say
+  something in English, even if broken, misspelled or telegraphic. Set it to
+  false if it is gibberish or written in another language; then set BOTH
+  "correction" and "why" to empty strings.
+- Work out their intended meaning, then in "correction" rewrite the message the
+  way a friendly native speaker would naturally say it, in the user's OWN voice
+  (first person, keep "I" as "I"). Restructure freely and keep their casual,
+  friendly register. Do NOT reply to, answer, or continue the message.
+- If the message is already clear, correct AND natural, set "correction" to an
+  empty string. Ignore pure punctuation/capitalization differences.
+- When there is a correction, fill "why" with ONE very short reason (max ~6
+  words). Otherwise "why" is an empty string.
+""".strip()
+
+
+def generate_correction(text, level="Intermediate"):
+    """Return {correction, why, understood} for one chat message. Uses the cheap
+    guards first, then the model; any failure returns no correction."""
+    if (looks_like_gibberish(text) or looks_non_english(text)
+            or len(text) > MAX_MESSAGE_CHARS):
+        return {"correction": "", "why": "", "understood": False}
+    system = (CORRECTION_SYSTEM
+              + f'\n\nThe user\'s English level is "{level}". '
+                "Match your vocabulary to it.")
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=512,
+            system=system,
+            tools=[CORRECTION_TOOL],
+            tool_choice={"type": "tool", "name": "correct_english"},
+            messages=[{"role": "user", "content": text}],
+        )
+        for block in response.content:
+            if block.type == "tool_use":
+                d = block.input
+                return {
+                    "correction": d.get("correction", ""),
+                    "why": d.get("why", ""),
+                    "understood": d.get("understood", True),
+                }
+    except Exception as e:
+        print("Correction error:", e)
+    return {"correction": "", "why": "", "understood": True}
+
+
 # ---------- conversations & messages (partner chat) ----------
 
 def _conv_member(me_id: int, conversation_id: int) -> bool:
@@ -744,6 +825,7 @@ class SendMsgReq(BaseModel):
     token: str
     conversationId: int
     text: str
+    level: str = "Intermediate"
 
 
 class FetchMsgReq(BaseModel):
@@ -781,8 +863,41 @@ def message_send(request: SendMsgReq):
         return {"ok": False, "error": "That message is too long."}
     if not _conv_member(me["user_id"], request.conversationId):
         return {"ok": False, "error": "That isn't your conversation."}
-    msg = db.add_message(request.conversationId, me["user_id"], text)
+    # The sender's private correction (coaching) is generated and stored with
+    # the message. The sender's current "what my partner sees" preference is
+    # snapshotted onto the row, so changing it later won't rewrite old messages.
+    corr = generate_correction(text, request.level)
+    msg = db.add_message(
+        request.conversationId, me["user_id"], text,
+        corrected=corr["correction"], why=corr["why"],
+        understood=corr["understood"],
+        sender_pref=me["partner_view_pref"] or 1,
+    )
     return {"ok": True, "message": msg}
+
+
+def _view_message(m: dict, viewer_id: int) -> dict:
+    """Render one stored message for a particular viewer.
+
+    Your own messages always come back in full (you always see your private
+    correction card). A partner's message is shaped by THAT sender's snapshotted
+    preference: 1 = original + their card, 2 = corrected sentence only (no card),
+    3 = original only (no card).
+    """
+    if m["senderId"] == viewer_id:
+        return m  # your own message — full, with your card
+    pref = m.get("senderPref", 1) or 1
+    corrected = m.get("corrected", "")
+    if pref == 2:
+        # Show the polished sentence (fall back to original if there was no fix)
+        # and hide the card.
+        shown = corrected if corrected else m["text"]
+        return {**m, "text": shown, "corrected": "", "why": ""}
+    if pref == 3:
+        # Original only, no card.
+        return {**m, "corrected": "", "why": ""}
+    # pref 1 — original + the sender's card (left as stored).
+    return m
 
 
 @app.post("/message/fetch")
@@ -792,6 +907,24 @@ def message_fetch(request: FetchMsgReq):
         return {"ok": False, "error": "Please log in again."}
     if not _conv_member(me["user_id"], request.conversationId):
         return {"ok": False, "error": "That isn't your conversation."}
-    return {"ok": True,
-            "messages": db.get_messages(request.conversationId,
-                                        request.sinceId)}
+    rows = db.get_messages(request.conversationId, request.sinceId)
+    shaped = [_view_message(m, me["user_id"]) for m in rows]
+    return {"ok": True, "messages": shaped}
+
+
+# ---------- partner-view preference (Phase 4) ----------
+
+class PartnerViewReq(BaseModel):
+    token: str
+    pref: int  # 1 = original + card, 2 = corrected only, 3 = original only
+
+
+@app.post("/prefs/partner-view")
+def prefs_partner_view(request: PartnerViewReq):
+    me = _user_for_token(request.token)
+    if me is None:
+        return {"ok": False, "error": "Please log in again."}
+    if request.pref not in (1, 2, 3):
+        return {"ok": False, "error": "Invalid preference."}
+    db.update_partner_view_pref(me["user_id"], request.pref)
+    return {"ok": True, "partnerViewPref": request.pref}

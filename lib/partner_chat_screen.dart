@@ -30,6 +30,7 @@ class _PartnerChatScreenState extends State<PartnerChatScreen> {
   bool _fetching = false; // guards against overlapping fetches
   Timer? _pollTimer;
   String? _error;
+  Set<String> _savedKeys = {}; // corrections already bookmarked
 
   String get _name {
     final d = (widget.friend['displayName'] ?? '').toString();
@@ -61,6 +62,7 @@ class _PartnerChatScreenState extends State<PartnerChatScreen> {
   Future<void> _open() async {
     final prefs = await SharedPreferences.getInstance();
     _myUserId = prefs.getInt('userId') ?? 0;
+    _savedKeys = await loadSavedCorrectionKeys();
     final res = await openConversation(widget.friend['userId'] as int);
     if (!mounted) return;
     if (res['ok'] != true) {
@@ -163,14 +165,180 @@ class _PartnerChatScreenState extends State<PartnerChatScreen> {
                               itemCount: _messages.length,
                               itemBuilder: (context, i) {
                                 final m = _messages[i];
-                                return _bubble(m['text'] as String,
-                                    (m['senderId'] as int) == _myUserId);
+                                final mine =
+                                    (m['senderId'] as int) == _myUserId;
+                                final corrected =
+                                    (m['corrected'] ?? '') as String;
+                                return Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    _bubble(m['text'] as String, mine),
+                                    // A correction card is shown when the server
+                                    // sends one: always for your own messages
+                                    // (your private coaching), and for a friend's
+                                    // message only if they chose to share it.
+                                    if (corrected.isNotEmpty)
+                                      _correctionCard(
+                                        m['text'] as String,
+                                        corrected,
+                                        (m['why'] ?? '') as String,
+                                        mine,
+                                      ),
+                                  ],
+                                );
                               },
                             ),
                     ),
                     _inputBar(),
                   ],
                 ),
+    );
+  }
+
+  Future<void> _toggleSave(
+      String original, String correction, String why) async {
+    final nowSaved = await toggleSavedCorrection(original, correction, why);
+    if (!mounted) return;
+    setState(() {
+      final key = correctionKey(original, correction);
+      if (nowSaved) {
+        _savedKeys.add(key);
+      } else {
+        _savedKeys.remove(key);
+      }
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(nowSaved
+            ? 'Saved to your review list'
+            : 'Removed from your review list'),
+      ),
+    );
+  }
+
+  // Colored track-changes spans (red strike-through for removed, green for
+  // added) — reuses the shared wordDiff from the AI chat.
+  List<InlineSpan> _diffSpans(String original, String correction) {
+    final spans = <InlineSpan>[];
+    for (final s in wordDiff(original, correction)) {
+      switch (s.op) {
+        case DiffOp.equal:
+          spans.add(TextSpan(text: '${s.text} '));
+          break;
+        case DiffOp.delete:
+          spans.add(TextSpan(
+            text: '${s.text} ',
+            style: const TextStyle(
+              color: AppColors.deletionRed,
+              decoration: TextDecoration.lineThrough,
+            ),
+          ));
+          break;
+        case DiffOp.insert:
+          spans.add(TextSpan(
+            text: '${s.text} ',
+            style: const TextStyle(
+              color: AppColors.correctionGreen,
+              fontWeight: FontWeight.w600,
+            ),
+          ));
+          break;
+      }
+    }
+    return spans;
+  }
+
+  Widget _correctionCard(
+      String original, String correction, String why, bool mine) {
+    final maxW = MediaQuery.of(context).size.width * 0.88;
+    return Align(
+      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: maxW),
+        child: Container(
+          margin: const EdgeInsets.only(left: 14, right: 14, top: 2, bottom: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: const BoxDecoration(
+            color: AppColors.white,
+            border: Border(
+              left: BorderSide(color: AppColors.gold, width: 3),
+              top: BorderSide(color: AppColors.borderTint, width: 0.5),
+              right: BorderSide(color: AppColors.borderTint, width: 0.5),
+              bottom: BorderSide(color: AppColors.borderTint, width: 0.5),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.check, size: 15, color: AppColors.navy),
+                  const SizedBox(width: 4),
+                  const Text(
+                    'CORRECTION',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.5,
+                      color: AppColors.navy,
+                    ),
+                  ),
+                  const Spacer(),
+                  InkWell(
+                    onTap: () => _toggleSave(original, correction, why),
+                    borderRadius: BorderRadius.circular(4),
+                    child: Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: Icon(
+                        _savedKeys.contains(
+                                correctionKey(original, correction))
+                            ? Icons.bookmark
+                            : Icons.bookmark_border,
+                        size: 18,
+                        color: AppColors.navy,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text.rich(
+                TextSpan(
+                  style: const TextStyle(
+                      color: AppColors.body, fontSize: 15, height: 1.55),
+                  children: _diffSpans(original, correction),
+                ),
+              ),
+              if (why.isNotEmpty) ...[
+                const SizedBox(height: 7),
+                const Divider(
+                    height: 1, thickness: 0.5, color: AppColors.divider),
+                const SizedBox(height: 7),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.lightbulb_outline,
+                        size: 14, color: AppColors.tipIcon),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        why,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontStyle: FontStyle.italic,
+                          color: AppColors.tipText,
+                          height: 1.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
     );
   }
 
