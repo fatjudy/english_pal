@@ -636,7 +636,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               text,
               style: TextStyle(
                 color: isUser ? Colors.white : Colors.black,
-                fontSize: 17,
+                fontSize: 15,
                 height: 1.45,
               ),
             ),
