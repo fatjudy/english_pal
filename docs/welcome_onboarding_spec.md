@@ -212,14 +212,99 @@ bottom.
 
 ---
 
+---
+
+# Account Setup Screen Spec
+
+The 3-page flow a new user completes after tapping **Create an account** on the
+login page (`lib/setup_flow_screen.dart`, `AccountSetupScreen`). Same inverted
+palette (navy canvas, faint circles, yellow accents) and Roboto scale.
+
+**Entry / exit:**
+- Login **Continue with Google / email → chat directly** (existing user).
+- Login **Create an account → this 3-page setup → chat**.
+- Settings **Start over** also routes here (after clearing prefs).
+- `AccountSetupScreen` takes a required `onDone` callback (→ chat) called after
+  the profile is saved.
+
+## Colors & font
+
+Same tokens as the welcome/login screens (local `_S` class): `navy`, `navyLight`,
+`navyDark`, `yellow #FFE0A6`, `white`, `bodyText #C6D2E6`, `dotInactive #41527A`.
+Roboto; type scale: 24 (page title), 15 (subtitle), 14 (field/section labels),
+16 (level card title), 13 (level blurb + hints).
+
+## Shared frame (every page)
+
+Navy `Scaffold` → `SafeArea` → `Stack` [background circles, padded (24px)
+`PageView`]. The `PageView` is **button-driven only** (`NeverScrollableScroll
+Physics`) — no free swiping in a form. Each page:
+
+1. **Header row** — a back arrow (`bodyText`; on page 1 it pops to login, else
+   goes to the previous page) + a **step indicator**: 3 pills where the active
+   step is a stretched `yellow` bar (22px) and the others are 7px `dotInactive`
+   dots.
+2. **Title** (24px, weight 700, `white`) + **subtitle** (15px, `bodyText`).
+3. **Content** — a scrollable middle area (`Expanded` + `SingleChildScrollView`).
+4. **Primary button** pinned at the bottom — full-width `yellow` fill, `navy`
+   text, weight 700, radius 14px, ~14px vertical padding. Disabled state uses
+   35%-opacity yellow.
+
+Spacing is deliberately balanced (title/subtitle top, content middle, button
+bottom) — not compact, not spread.
+
+## The 3 pages
+
+### Page 1 — name + personality
+- Title "Create your pal", subtitle "Give your AI partner a name and a
+  personality."
+- **Name** — a white filled `TextField`, navy text, radius 14px, `yellow` focus
+  border. **Next is disabled until the name is non-empty.**
+- **Personality** — a `Wrap` of multi-select pill chips (`kPersonalityOptions`).
+  Labels are 15px bold. Every chip has a `yellow` 1.5px frame (palette-consistent):
+  selected = `yellow` fill + navy text (weight 700); unselected = transparent fill
+  + `bodyText` label (weight 600).
+- Button: **Next**.
+
+### Page 2 — topics the pal loves
+- Title "What do you both love?", subtitle "Pick the topics your pal enjoys
+  chatting about."
+- Multi-select chips (`kHobbyOptions`), same chip style.
+- Button: **Next**.
+
+### Page 3 — English level
+- Title "Your English level", subtitle "This helps your pal match how it talks
+  to you."
+- Three single-select **cards** (`kLevelOptions`), each: a radio icon
+  (`radio_button_checked`/`unchecked`, `yellow` when selected), the level name
+  (16px, weight 700, white), and a one-line blurb (13px, `bodyText`). Selected
+  card = 2px `yellow` border + faint yellow tint; unselected = `navyLight` fill.
+  Blurbs:
+  - **Beginner** — "Just starting out — simple words, short sentences, and lots
+    of encouragement."
+  - **Intermediate** (default) — "You can chat about everyday things but want to
+    get smoother and more confident."
+  - **Advanced** — "Comfortable and fluent — polishing nuance, idioms, and
+    natural phrasing."
+- Button: **Start chatting** → saves profile + `onDone()`.
+
+## Saved data
+
+Writes `SharedPreferences` (and best-effort cloud via `saveProfileToCloud`):
+`palName` (defaults to "Mia" if left blank), `personality` (list), `level`.
+The 3-page flow has **no separate hobbies page**, so page 2's selection is saved
+to **both** `hobbies` and `topics` — keeping the chat persona and the notification
+opener (which reads user topics / pal hobbies) working unchanged.
+
+---
+
 ## Open items / next
 
-- Wire real authentication: Google Sign-In + email, `onCreateAccount`, and the
-  Terms / Privacy links (convert `LoginScreen` to `StatefulWidget` for the link
-  recognizers).
+- Wire real authentication: Google Sign-In + email, and the Terms / Privacy links
+  (convert `LoginScreen` to `StatefulWidget` for the link recognizers).
 - Build the **email sign-in / create-account** flow that "Continue with email"
-  and "Create an account" lead to.
+  leads to (the setup flow itself is built).
 - Optional: swap the slide-1 icon hero for a custom illustration if design time
   allows.
-- Note: `_Onb` (onboarding) and `_L` (login) duplicate the same color hexes. If
-  they drift, consider extracting a shared public palette.
+- Note: `_Onb` (onboarding), `_L` (login), and `_S` (setup) duplicate the same
+  color hexes. If they drift, extract a shared public palette.

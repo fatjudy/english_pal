@@ -152,7 +152,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             Text(
               title,
               style: const TextStyle(
-                fontSize: 34,
+                fontSize: 36,
                 fontWeight: FontWeight.w700,
                 height: 1.1,
                 color: _Onb.yellow,
@@ -164,7 +164,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             headline,
             textAlign: TextAlign.center,
             style: const TextStyle(
-              fontSize: 22,
+              fontSize: 24,
               fontWeight: FontWeight.w700,
               color: _Onb.white,
             ),
@@ -174,7 +174,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             body,
             textAlign: TextAlign.center,
             style: const TextStyle(
-              fontSize: 15,
+              fontSize: 17,
               height: 1.5,
               color: _Onb.bodyText,
             ),
@@ -228,7 +228,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   const Text(
                     'Hi there!',
                     style: TextStyle(
-                      fontSize: 34,
+                      fontSize: 36,
                       fontWeight: FontWeight.w700,
                       height: 1.1,
                       color: _Onb.yellow,
@@ -242,7 +242,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                         'Meet your English partner',
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          fontSize: 22,
+                          fontSize: 24,
                           fontWeight: FontWeight.w700,
                           color: _Onb.white,
                         ),
@@ -252,7 +252,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                         'A friendly AI that chats with you anytime, at your own pace.',
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          fontSize: 15,
+                          fontSize: 17,
                           height: 1.5,
                           color: _Onb.bodyText,
                         ),
@@ -309,7 +309,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         child: Text(
           text,
           style: TextStyle(
-            fontSize: 14,
+            fontSize: 17,
             height: 1.45,
             color: isUser ? _Onb.navy : _Onb.goldText,
           ),
@@ -358,7 +358,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               Text(
                 'Correction',
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 15,
                   fontWeight: FontWeight.w500,
                   color: _Onb.navy,
                 ),
@@ -370,7 +370,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           Text.rich(
             TextSpan(
               style: const TextStyle(
-                fontSize: 13.5,
+                fontSize: 15,
                 height: 1.55,
                 color: Color(0xFF2A2A2A),
               ),
@@ -408,7 +408,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 child: Text(
                   "Past tense: 'go' → 'went'.",
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 15,
                     height: 1.5,
                     fontStyle: FontStyle.italic,
                     color: _Onb.tipText,
@@ -444,7 +444,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ),
                 padding: const EdgeInsets.symmetric(vertical: 13),
                 textStyle: const TextStyle(
-                  fontSize: 15,
+                  fontSize: 17,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -456,7 +456,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             onTap: widget.onLogin,
             child: Text.rich(
               TextSpan(
-                style: const TextStyle(fontSize: 13, color: _Onb.bodyText),
+                style: const TextStyle(fontSize: 15, color: _Onb.bodyText),
                 children: const [
                   TextSpan(text: 'Already have an account? '),
                   TextSpan(
@@ -543,7 +543,7 @@ class _SwipeHintState extends State<_SwipeHint>
         const Text(
           'Swipe to start',
           style: TextStyle(
-            fontSize: 13,
+            fontSize: 15,
             fontWeight: FontWeight.w500,
             color: _Onb.yellow,
           ),

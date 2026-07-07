@@ -10,6 +10,7 @@ import 'package:timezone/timezone.dart' as tz;
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'onboarding_screen.dart';
 import 'login_screen.dart';
+import 'setup_flow_screen.dart';
 
 final FlutterLocalNotificationsPlugin notificationsPlugin =
     FlutterLocalNotificationsPlugin();
@@ -239,6 +240,14 @@ void main() async {
   runApp(const MyApp());
 }
 
+// Replace the whole nav stack with the chat screen (used after log in / setup).
+void _openChat(BuildContext context) {
+  Navigator.of(context).pushAndRemoveUntil(
+    MaterialPageRoute(builder: (_) => const ChatScreen()),
+    (route) => false,
+  );
+}
+
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -260,11 +269,26 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
         colorScheme: scheme,
         scaffoldBackgroundColor: AppColors.pageBg,
+        // Base type scale (shared 6-level scale: 36/26/24/18/17/15). Sizes only —
+        // colors are merged from the default, so text colors are preserved.
+        textTheme: const TextTheme(
+          bodyLarge: TextStyle(fontSize: 17),
+          bodyMedium: TextStyle(fontSize: 17),
+          bodySmall: TextStyle(fontSize: 15),
+          titleLarge: TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
+          titleMedium: TextStyle(fontSize: 18),
+          labelLarge: TextStyle(fontSize: 17),
+        ),
         appBarTheme: const AppBarTheme(
           backgroundColor: AppColors.navy,
           foregroundColor: Colors.white,
           centerTitle: false,
           elevation: 0,
+          titleTextStyle: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+          ),
         ),
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
@@ -274,7 +298,7 @@ class MyApp extends StatelessWidget {
                 borderRadius: BorderRadius.circular(14)),
             padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 22),
             textStyle:
-                const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
           ),
         ),
         chipTheme: ChipThemeData(
@@ -283,7 +307,11 @@ class MyApp extends StatelessWidget {
           side: const BorderSide(color: AppColors.borderTint),
           selectedColor: AppColors.gold,
         ),
-        listTileTheme: const ListTileThemeData(iconColor: AppColors.navy),
+        listTileTheme: const ListTileThemeData(
+          iconColor: AppColors.navy,
+          titleTextStyle: TextStyle(fontSize: 17, color: AppColors.body),
+          subtitleTextStyle: TextStyle(fontSize: 15, color: AppColors.tipText),
+        ),
         floatingActionButtonTheme: const FloatingActionButtonThemeData(
           backgroundColor: AppColors.navy,
           foregroundColor: Colors.white,
@@ -303,7 +331,21 @@ class MyApp extends StatelessWidget {
           return Builder(
             builder: (context) {
               void openLogin() => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const LoginScreen()),
+                    MaterialPageRoute(
+                      builder: (loginCtx) => LoginScreen(
+                        // Log in → straight to chat.
+                        onGoogle: () => _openChat(loginCtx),
+                        onEmail: () => _openChat(loginCtx),
+                        // Create account → the 3-page setup → chat.
+                        onCreateAccount: () => Navigator.of(loginCtx).push(
+                          MaterialPageRoute(
+                            builder: (_) => AccountSetupScreen(
+                              onDone: () => _openChat(loginCtx),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   );
               return OnboardingScreen(
                 onSignUp: openLogin,
@@ -574,7 +616,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Widget _messageBubble(String text, bool isUser) {
     final maxW = MediaQuery.of(context).size.width * 0.82;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       child: Align(
         alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
         child: ConstrainedBox(
@@ -594,7 +636,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               text,
               style: TextStyle(
                 color: isUser ? Colors.white : Colors.black,
-                fontSize: 14,
+                fontSize: 17,
                 height: 1.45,
               ),
             ),
@@ -668,7 +710,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     Text(
                       'CORRECTION',
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: 15,
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0.5,
                         color: AppColors.navy,
@@ -681,7 +723,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   TextSpan(
                     style: const TextStyle(
                       color: AppColors.body,
-                      fontSize: 13.5,
+                      fontSize: 15,
                       height: 1.55,
                     ),
                     children: spans,
@@ -702,7 +744,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         child: Text(
                           why,
                           style: const TextStyle(
-                            fontSize: 12,
+                            fontSize: 15,
                             fontStyle: FontStyle.italic,
                             color: AppColors.tipText,
                             height: 1.5,
@@ -727,7 +769,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         padding: EdgeInsets.only(right: 18, bottom: 8, top: 2),
         child: Text(
           '✓ Looks good!',
-          style: TextStyle(color: AppColors.correctionGreen, fontSize: 12),
+          style: TextStyle(color: AppColors.correctionGreen, fontSize: 15),
         ),
       ),
     );
@@ -765,7 +807,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             '$palName is typing…',
             style: const TextStyle(
               color: AppColors.navy,
-              fontSize: 14,
+              fontSize: 17,
               fontStyle: FontStyle.italic,
             ),
           ),
@@ -793,7 +835,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     palName.toUpperCase(),
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 15,
+                      fontSize: 17,
                       fontWeight: FontWeight.w600,
                       letterSpacing: 0.5,
                     ),
@@ -801,7 +843,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   ),
                   const Text(
                     'always here to help',
-                    style: TextStyle(color: AppColors.gold, fontSize: 12),
+                    style: TextStyle(color: AppColors.gold, fontSize: 15),
                   ),
                 ],
               ),
@@ -874,7 +916,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         textInputAction: TextInputAction.send,
                         onSubmitted: (_) => _sendMessage(),
                         style: const TextStyle(
-                            color: AppColors.body, fontSize: 14),
+                            color: AppColors.body, fontSize: 17),
                         decoration: InputDecoration(
                           hintText: 'Type in English…',
                           hintStyle: TextStyle(color: Colors.grey.shade500),
@@ -939,178 +981,6 @@ const List<String> kTopicOptions = [
   'Shopping', 'Health',
 ];
 const List<String> kLevelOptions = ['Beginner', 'Intermediate', 'Advanced'];
-
-class SetupScreen extends StatefulWidget {
-  const SetupScreen({super.key});
-
-  @override
-  State<SetupScreen> createState() => _SetupScreenState();
-}
-
-class _SetupScreenState extends State<SetupScreen> {
-  final TextEditingController _nameController = TextEditingController();
-  final PageController _pageController = PageController();
-  final List<String> _personalityOptions = kPersonalityOptions;
-  final Set<String> _selectedPersonalities = {};
-
-  final List<String> _hobbyOptions = kHobbyOptions;
-  final Set<String> _selectedHobbies = {};
-
-  final List<String> _topicOptions = kTopicOptions;
-  final Set<String> _selectedTopics = {};
-
-  String _selectedLevel = 'Intermediate';
-
-  Widget _chipSection(String label, List<String> options, Set<String> selected) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 4,
-          children: [
-            for (final option in options)
-              FilterChip(
-                label: Text(option),
-                selected: selected.contains(option),
-                onSelected: (isSelected) {
-                  setState(() {
-                    if (isSelected) {
-                      selected.add(option);
-                    } else {
-                      selected.remove(option);
-                    }
-                  });
-                },
-              ),
-          ],
-        ),
-        const SizedBox(height: 24),
-      ],
-    );
-  }
-
-  Widget _nextButton() {
-    return Align(
-      alignment: Alignment.centerRight,
-      child: FilledButton(
-        onPressed: () {
-          _pageController.nextPage(
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeInOut,
-          );
-        },
-        child: const Text('Next'),
-      ),
-    );
-  }
-
-  Widget _wizardPage(List<Widget> children) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: children,
-      ),
-    );
-  }
-
-  Future<void> _saveSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('palName', _nameController.text);
-    await prefs.setStringList('personality', _selectedPersonalities.toList());
-    await prefs.setStringList('hobbies', _selectedHobbies.toList());
-    await prefs.setStringList('topics', _selectedTopics.toList());
-    await prefs.setString('level', _selectedLevel);
-    await saveProfileToCloud({
-      'palName': _nameController.text,
-      'personality': _selectedPersonalities.toList(),
-      'hobbies': _selectedHobbies.toList(),
-      'topics': _selectedTopics.toList(),
-      'level': _selectedLevel,
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Set up your pal')),
-      body: PageView(
-        controller: _pageController,
-        children: [
-          _wizardPage([
-            const SizedBox(height: 20),
-            const Text('What would you like to name your pal?'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _nameController,
-              decoration: const InputDecoration(
-                hintText: 'e.g. Mia, Leo, Aria...',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 24),
-            _chipSection('Pick a few personality traits:', _personalityOptions,
-                _selectedPersonalities),
-            _nextButton(),
-          ]),
-          _wizardPage([
-            const SizedBox(height: 20),
-            _chipSection("What are your pal's hobbies?", _hobbyOptions,
-                _selectedHobbies),
-            _nextButton(),
-          ]),
-          _wizardPage([
-            const SizedBox(height: 20),
-            _chipSection('What do you want to talk about?', _topicOptions,
-                _selectedTopics),
-            _nextButton(),
-          ]),
-          _wizardPage([
-            const SizedBox(height: 20),
-            const Text('Your English level:'),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              children: [
-                for (final level in kLevelOptions)
-                  ChoiceChip(
-                    label: Text(level),
-                    selected: _selectedLevel == level,
-                    onSelected: (isSelected) {
-                      setState(() {
-                        _selectedLevel = level;
-                      });
-                    },
-                  ),
-              ],
-            ),
-            const SizedBox(height: 32),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: () async {
-                  await _saveSettings();
-                  if (!context.mounted) return;
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(builder: (context) => const ChatScreen()),
-                  );
-                },
-                child: const Padding(
-                  padding: EdgeInsets.all(14),
-                  child: Text('Start', style: TextStyle(fontSize: 18)),
-                ),
-              ),
-            ),
-          ]),
-        ],
-      ),
-    );
-  }
-}
 
 class EditPalScreen extends StatefulWidget {
   const EditPalScreen({super.key});
@@ -1255,7 +1125,7 @@ class _EditPalScreenState extends State<EditPalScreen> {
                       },
                       child: const Padding(
                         padding: EdgeInsets.all(14),
-                        child: Text('Save', style: TextStyle(fontSize: 16)),
+                        child: Text('Save', style: TextStyle(fontSize: 17)),
                       ),
                     ),
                   ),
@@ -1306,7 +1176,11 @@ class SettingsScreen extends StatelessWidget {
               if (!context.mounted) return;
               Navigator.pushAndRemoveUntil(
                 context,
-                MaterialPageRoute(builder: (context) => const SetupScreen()),
+                MaterialPageRoute(
+                  builder: (setupCtx) => AccountSetupScreen(
+                    onDone: () => _openChat(setupCtx),
+                  ),
+                ),
                 (route) => false,
               );
             },

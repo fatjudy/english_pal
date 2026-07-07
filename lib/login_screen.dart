@@ -64,7 +64,7 @@ class LoginScreen extends StatelessWidget {
                     'Welcome to English Pal',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      fontSize: 22,
+                      fontSize: 24,
                       fontWeight: FontWeight.w700,
                       color: _L.white,
                     ),
@@ -74,7 +74,7 @@ class LoginScreen extends StatelessWidget {
                     'Log in to save your progress and streaks.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      fontSize: 15,
+                      fontSize: 17,
                       height: 1.5,
                       color: _L.bodyText,
                     ),
@@ -178,7 +178,7 @@ class LoginScreen extends StatelessWidget {
             SizedBox(width: 10),
             Text(
               'Continue with Google',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
             ),
           ],
         ),
@@ -205,7 +205,7 @@ class LoginScreen extends StatelessWidget {
             SizedBox(width: 10),
             Text(
               'Continue with email',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
             ),
           ],
         ),
@@ -221,14 +221,14 @@ class LoginScreen extends StatelessWidget {
       children: [
         const Text(
           "New here? ",
-          style: TextStyle(fontSize: 14, color: _L.bodyText),
+          style: TextStyle(fontSize: 17, color: _L.bodyText),
         ),
         GestureDetector(
           onTap: onCreateAccount ?? () {},
           child: const Text(
             'Create an account',
             style: TextStyle(
-              fontSize: 14,
+              fontSize: 17,
               fontWeight: FontWeight.w600,
               color: _L.yellow,
             ),
@@ -249,7 +249,7 @@ class LoginScreen extends StatelessWidget {
     return Text.rich(
       textAlign: TextAlign.center,
       TextSpan(
-        style: const TextStyle(fontSize: 12, height: 1.5, color: _L.bodyText),
+        style: const TextStyle(fontSize: 15, height: 1.5, color: _L.bodyText),
         children: const [
           TextSpan(text: 'By continuing, you agree to our '),
           TextSpan(
