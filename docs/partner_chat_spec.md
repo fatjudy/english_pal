@@ -166,8 +166,10 @@ Authenticated endpoints take the token; the backend resolves it to a `user_id`.
 - **Phase 1 — Friends:** ✅ done. `friendships` table + `/friends/search`,
   `/friends/request`, `/friends/respond`, `/friends/list` (token-authed);
   `friends_screen.dart` reached via Settings → Friends. Verified in-app.
-- **Phase 2 — Messaging plumbing:** conversations + send/fetch, *plain text*,
-  polling. Two accounts exchange messages.
+- **Phase 2 — Messaging plumbing:** ✅ done. `conversations` + `messages`
+  tables; `/conversation/open`, `/message/send`, `/message/fetch`;
+  `partner_chat_screen.dart` = real chat with left/right bubbles and 2s polling.
+  Plain text only (no corrections yet). Verified in-app.
 - **Phase 3 — Corrections:** correction-only call; store original + corrected;
   render the sender's private card.
 - **Phase 4 — Partner-view preference:** the 1/2/3 setting; fetch respects it.

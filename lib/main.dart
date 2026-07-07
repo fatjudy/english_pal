@@ -233,6 +233,19 @@ Future<Map<String, dynamic>> respondFriendRequest(
 
 Future<Map<String, dynamic>> loadFriends() => _friendsPost('/friends/list', {});
 
+// --- partner messaging -----------------------------------------------------
+
+Future<Map<String, dynamic>> openConversation(int friendUserId) =>
+    _friendsPost('/conversation/open', {'friendUserId': friendUserId});
+
+Future<Map<String, dynamic>> sendPartnerMessage(int conversationId, String text) =>
+    _friendsPost('/message/send',
+        {'conversationId': conversationId, 'text': text});
+
+Future<Map<String, dynamic>> fetchPartnerMessages(int conversationId, int sinceId) =>
+    _friendsPost('/message/fetch',
+        {'conversationId': conversationId, 'sinceId': sinceId});
+
 Future<String> fetchOpener(String topic) async {
   final prefs = await SharedPreferences.getInstance();
   final url = '$backendBase/opener';
