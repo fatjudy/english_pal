@@ -8,7 +8,9 @@ Data is keyed by an anonymous device_id sent by the app.
 """
 
 import json
+import secrets
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "english_pal.db"
@@ -41,6 +43,60 @@ def init_db():
             device_id TEXT PRIMARY KEY,
             messages  TEXT,
             summary   TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            user_id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            email             TEXT UNIQUE NOT NULL,
+            password_hash     TEXT NOT NULL,
+            username          TEXT UNIQUE NOT NULL,
+            display_name      TEXT,
+            partner_view_pref INTEGER DEFAULT 1,
+            created_at        TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sessions (
+            token      TEXT PRIMARY KEY,
+            user_id    INTEGER NOT NULL,
+            created_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS friendships (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            requester_id INTEGER NOT NULL,
+            addressee_id INTEGER NOT NULL,
+            status       TEXT NOT NULL,   -- 'pending' or 'accepted'
+            created_at   TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS conversations (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_low   INTEGER NOT NULL,   -- the smaller user_id of the pair
+            user_high  INTEGER NOT NULL,   -- the larger user_id of the pair
+            created_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS messages (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER NOT NULL,
+            sender_id       INTEGER NOT NULL,
+            text            TEXT NOT NULL,
+            created_at      TEXT
         )
         """
     )
@@ -123,3 +179,242 @@ def load_chat(device_id):
         "messages": json.loads(row["messages"]),
         "summary": row["summary"] or "",
     }
+
+
+# ---------- users (accounts for partner chat) ----------
+
+def create_user(email, password_hash, username, display_name):
+    conn = get_conn()
+    cur = conn.execute(
+        """
+        INSERT INTO users (email, password_hash, username, display_name, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (email, password_hash, username, display_name,
+         datetime.utcnow().isoformat()),
+    )
+    conn.commit()
+    user_id = cur.lastrowid
+    conn.close()
+    return user_id
+
+
+def get_user_by_email(email):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM users WHERE email = ?", (email,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_user_by_username(username):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM users WHERE username = ?", (username,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_user_by_id(user_id):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM users WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+# ---------- sessions (login tokens) ----------
+
+def create_session(user_id):
+    token = secrets.token_urlsafe(32)
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)",
+        (token, user_id, datetime.utcnow().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    return token
+
+
+def get_user_id_for_token(token):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT user_id FROM sessions WHERE token = ?", (token,)
+    ).fetchone()
+    conn.close()
+    return row["user_id"] if row else None
+
+
+# ---------- friendships (partner chat) ----------
+
+def get_friendship(user_a, user_b):
+    """The friendship row between two users, in either direction (or None)."""
+    conn = get_conn()
+    row = conn.execute(
+        """
+        SELECT * FROM friendships
+        WHERE (requester_id = ? AND addressee_id = ?)
+           OR (requester_id = ? AND addressee_id = ?)
+        """,
+        (user_a, user_b, user_b, user_a),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def create_friend_request(requester_id, addressee_id):
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT INTO friendships (requester_id, addressee_id, status, created_at)
+        VALUES (?, ?, 'pending', ?)
+        """,
+        (requester_id, addressee_id, datetime.utcnow().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def accept_friend_request(requester_id, addressee_id):
+    conn = get_conn()
+    conn.execute(
+        """
+        UPDATE friendships SET status = 'accepted'
+        WHERE requester_id = ? AND addressee_id = ? AND status = 'pending'
+        """,
+        (requester_id, addressee_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_friendship(user_a, user_b):
+    conn = get_conn()
+    conn.execute(
+        """
+        DELETE FROM friendships
+        WHERE (requester_id = ? AND addressee_id = ?)
+           OR (requester_id = ? AND addressee_id = ?)
+        """,
+        (user_a, user_b, user_b, user_a),
+    )
+    conn.commit()
+    conn.close()
+
+
+def list_friends(user_id):
+    """Users this person is accepted friends with (either direction)."""
+    conn = get_conn()
+    rows = conn.execute(
+        """
+        SELECT u.* FROM friendships f
+        JOIN users u ON u.user_id = CASE
+            WHEN f.requester_id = ? THEN f.addressee_id
+            ELSE f.requester_id END
+        WHERE f.status = 'accepted'
+          AND (f.requester_id = ? OR f.addressee_id = ?)
+        ORDER BY u.username
+        """,
+        (user_id, user_id, user_id),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def list_incoming_requests(user_id):
+    """Users who sent this person a still-pending friend request."""
+    conn = get_conn()
+    rows = conn.execute(
+        """
+        SELECT u.* FROM friendships f
+        JOIN users u ON u.user_id = f.requester_id
+        WHERE f.addressee_id = ? AND f.status = 'pending'
+        ORDER BY f.created_at DESC
+        """,
+        (user_id,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def search_users(query, exclude_user_id):
+    conn = get_conn()
+    rows = conn.execute(
+        """
+        SELECT * FROM users
+        WHERE username LIKE ? AND user_id != ?
+        ORDER BY username LIMIT 20
+        """,
+        (f"%{query}%", exclude_user_id),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# ---------- conversations & messages (partner chat) ----------
+
+def get_or_create_conversation(user_a, user_b):
+    """One conversation per pair — the id is stable whichever way round the two
+    users are passed (we always store the smaller id in user_low)."""
+    low, high = (user_a, user_b) if user_a < user_b else (user_b, user_a)
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT id FROM conversations WHERE user_low = ? AND user_high = ?",
+        (low, high),
+    ).fetchone()
+    if row is None:
+        cur = conn.execute(
+            "INSERT INTO conversations (user_low, user_high, created_at) "
+            "VALUES (?, ?, ?)",
+            (low, high, datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+        conv_id = cur.lastrowid
+    else:
+        conv_id = row["id"]
+    conn.close()
+    return conv_id
+
+
+def get_conversation(conversation_id):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM conversations WHERE id = ?", (conversation_id,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def add_message(conversation_id, sender_id, text):
+    conn = get_conn()
+    created = datetime.utcnow().isoformat()
+    cur = conn.execute(
+        "INSERT INTO messages (conversation_id, sender_id, text, created_at) "
+        "VALUES (?, ?, ?, ?)",
+        (conversation_id, sender_id, text, created),
+    )
+    conn.commit()
+    msg_id = cur.lastrowid
+    conn.close()
+    return {"id": msg_id, "senderId": sender_id, "text": text,
+            "createdAt": created}
+
+
+def get_messages(conversation_id, since_id=0):
+    """Messages in a conversation with id greater than since_id (0 = all)."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM messages WHERE conversation_id = ? AND id > ? "
+        "ORDER BY id",
+        (conversation_id, since_id),
+    ).fetchall()
+    conn.close()
+    return [
+        {"id": r["id"], "senderId": r["sender_id"], "text": r["text"],
+         "createdAt": r["created_at"]}
+        for r in rows
+    ]

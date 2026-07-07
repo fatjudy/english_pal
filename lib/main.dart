@@ -11,6 +11,9 @@ import 'package:flutter_timezone/flutter_timezone.dart';
 import 'onboarding_screen.dart';
 import 'login_screen.dart';
 import 'setup_flow_screen.dart';
+import 'email_auth_screen.dart';
+import 'friends_screen.dart';
+import 'chats_list_screen.dart';
 
 final FlutterLocalNotificationsPlugin notificationsPlugin =
     FlutterLocalNotificationsPlugin();
@@ -155,6 +158,81 @@ Future<Map<String, dynamic>?> loadChatFromCloud() async {
   }
 }
 
+// --- authentication (real accounts, for partner chat) ---------------------
+
+// "Continue with email". mode is 'login' or 'signup' (from the toggle), so the
+// backend enforces the chosen intent. Returns the decoded JSON, e.g.
+// {ok: true, token, user} or {ok: false, error: '...'}.
+Future<Map<String, dynamic>> continueWithEmail({
+  required String email,
+  required String password,
+  required String mode,
+}) async {
+  try {
+    final response = await http
+        .post(
+          Uri.parse('$backendBase/auth/continue'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(
+              {'email': email, 'password': password, 'mode': mode}),
+        )
+        .timeout(const Duration(seconds: 10));
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  } catch (e) {
+    return {'ok': false, 'error': 'Could not reach the server. Please try again.'};
+  }
+}
+
+// Persist the logged-in account on the phone so later features (partner chat)
+// can use the token and know who the user is.
+Future<void> saveAuth(Map<String, dynamic> data) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString('authToken', data['token'] as String);
+  final user = data['user'] as Map<String, dynamic>;
+  await prefs.setInt('userId', user['userId'] as int);
+  await prefs.setString('username', user['username'] as String);
+  await prefs.setString('displayName', (user['displayName'] ?? '') as String);
+  await prefs.setInt('partnerViewPref', (user['partnerViewPref'] ?? 1) as int);
+}
+
+// --- friends (partner chat) -----------------------------------------------
+
+Future<String> _authToken() async {
+  final prefs = await SharedPreferences.getInstance();
+  return prefs.getString('authToken') ?? '';
+}
+
+// Shared POST for the /friends/* endpoints: attaches the auth token and decodes
+// the JSON reply (or a friendly error on network failure).
+Future<Map<String, dynamic>> _friendsPost(
+    String path, Map<String, dynamic> body) async {
+  try {
+    final token = await _authToken();
+    final response = await http
+        .post(
+          Uri.parse('$backendBase$path'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'token': token, ...body}),
+        )
+        .timeout(const Duration(seconds: 10));
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  } catch (e) {
+    return {'ok': false, 'error': 'Could not reach the server. Please try again.'};
+  }
+}
+
+Future<Map<String, dynamic>> searchFriends(String query) =>
+    _friendsPost('/friends/search', {'query': query});
+
+Future<Map<String, dynamic>> sendFriendRequest(int targetUserId) =>
+    _friendsPost('/friends/request', {'targetUserId': targetUserId});
+
+Future<Map<String, dynamic>> respondFriendRequest(
+        int requesterId, bool accept) =>
+    _friendsPost('/friends/respond', {'requesterId': requesterId, 'accept': accept});
+
+Future<Map<String, dynamic>> loadFriends() => _friendsPost('/friends/list', {});
+
 Future<String> fetchOpener(String topic) async {
   final prefs = await SharedPreferences.getInstance();
   final url = '$backendBase/opener';
@@ -240,10 +318,10 @@ void main() async {
   runApp(const MyApp());
 }
 
-// Replace the whole nav stack with the chat screen (used after log in / setup).
-void _openChat(BuildContext context) {
+// Replace the whole nav stack with the Chats home (used after log in / setup).
+void _openHome(BuildContext context) {
   Navigator.of(context).pushAndRemoveUntil(
-    MaterialPageRoute(builder: (_) => const ChatScreen()),
+    MaterialPageRoute(builder: (_) => const ChatsListScreen()),
     (route) => false,
   );
 }
@@ -325,26 +403,52 @@ class MyApp extends StatelessWidget {
               body: Center(child: CircularProgressIndicator()),
             );
           }
-          if (snapshot.data!) return const ChatScreen();
+          if (snapshot.data!) return const ChatsListScreen();
           // New users see the welcome/onboarding carousel first; both
           // Sign up and Log in open the login page.
           return Builder(
             builder: (context) {
               void openLogin() => Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (loginCtx) => LoginScreen(
-                        // Log in → straight to chat.
-                        onGoogle: () => _openChat(loginCtx),
-                        onEmail: () => _openChat(loginCtx),
-                        // Create account → the 3-page setup → chat.
-                        onCreateAccount: () => Navigator.of(loginCtx).push(
-                          MaterialPageRoute(
-                            builder: (_) => AccountSetupScreen(
-                              onDone: () => _openChat(loginCtx),
+                      builder: (loginCtx) {
+                        // After a successful log in / sign up: existing users
+                        // (who already have a pal) go to chat; brand-new users
+                        // do the 3-page pal setup first.
+                        Future<void> afterAuth() async {
+                          final prefs = await SharedPreferences.getInstance();
+                          if (!loginCtx.mounted) return;
+                          if (prefs.getString('palName') != null) {
+                            _openHome(loginCtx);
+                          } else {
+                            Navigator.of(loginCtx).push(
+                              MaterialPageRoute(
+                                builder: (_) => AccountSetupScreen(
+                                  onDone: () => _openHome(loginCtx),
+                                ),
+                              ),
+                            );
+                          }
+                        }
+
+                        return LoginScreen(
+                          // Google sign-in is a later phase (needs Firebase).
+                          onGoogle: () =>
+                              ScaffoldMessenger.of(loginCtx).showSnackBar(
+                            const SnackBar(
+                              content: Text('Google sign-in is coming soon — '
+                                  'please use email for now.'),
                             ),
                           ),
-                        ),
-                      ),
+                          // Continue with email → log in, or auto-create the
+                          // account if the email is new.
+                          onEmail: () => Navigator.of(loginCtx).push(
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  EmailAuthScreen(onSuccess: afterAuth),
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   );
               return OnboardingScreen(
@@ -437,6 +541,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   List<String> hobbies = [];
   List<String> topics = [];
   String level = 'Intermediate';
+  // Keys of corrections already saved, so each card's bookmark can show
+  // filled (saved) vs. outline (not saved) without an async lookup per build.
+  Set<String> _savedKeys = {};
   String get _backendUrl => '$backendBase/chat';
   
   final List<Map<String, dynamic>> messages = [
@@ -576,8 +683,27 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (savedSummary != null) {
       summary = savedSummary;
     }
+    await _loadSavedKeys();
     await _checkPendingOpener();
     _scrollToBottom();
+  }
+
+  // Build the key used to tell whether a correction is already saved.
+  String _correctionKey(String original, String correction) =>
+      '$original|||$correction';
+
+  // Refresh the in-memory set of saved-correction keys from storage. Called on
+  // load and whenever we return from Settings (where items may be removed).
+  Future<void> _loadSavedKeys() async {
+    final prefs = await SharedPreferences.getInstance();
+    final List list =
+        jsonDecode(prefs.getString('saved_corrections') ?? '[]') as List;
+    setState(() {
+      _savedKeys = {
+        for (final e in list)
+          _correctionKey(e['original'] as String, e['correction'] as String),
+      };
+    });
   }
 
   // Re-read the pal's profile (e.g. after the user edits it in Settings) so the
@@ -591,6 +717,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       topics = prefs.getStringList('topics') ?? [];
       level = prefs.getString('level') ?? 'Intermediate';
     });
+    await _loadSavedKeys();
   }
 
   Future<void> _checkPendingOpener() async {
@@ -646,8 +773,54 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
   
+  // Toggle whether this correction is saved: tap the bookmark to add it to the
+  // on-device "saved_corrections" list, tap again to remove it.
+  Future<void> _toggleSaveCorrection(
+      String original, String correction, String why) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // Read the existing list — the same JSON round-trip schedules use.
+    final List<dynamic> list =
+        jsonDecode(prefs.getString('saved_corrections') ?? '[]')
+            as List<dynamic>;
+    final key = _correctionKey(original, correction);
+    final bool isSaved = _savedKeys.contains(key);
+
+    if (isSaved) {
+      list.removeWhere((e) =>
+          e['original'] == original && e['correction'] == correction);
+    } else {
+      list.add({
+        'original': original,
+        'correction': correction,
+        'why': why,
+        'savedAt': DateTime.now().toIso8601String(),
+      });
+    }
+    await prefs.setString('saved_corrections', jsonEncode(list));
+
+    // Update the in-memory set so the bookmark icon flips right away.
+    setState(() {
+      if (isSaved) {
+        _savedKeys.remove(key);
+      } else {
+        _savedKeys.add(key);
+      }
+    });
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(isSaved
+            ? 'Removed from your review list'
+            : 'Saved to your review list'),
+      ),
+    );
+  }
+
   Widget _correctionCard(String original, String correction, String why) {
     final segs = _wordDiff(original, correction);
+    final bool saved = _savedKeys.contains(_correctionKey(original, correction));
     final spans = <InlineSpan>[];
     for (final s in segs) {
       switch (s.op) {
@@ -704,16 +877,30 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  children: const [
-                    Icon(Icons.check, size: 15, color: AppColors.navy),
-                    SizedBox(width: 4),
-                    Text(
+                  children: [
+                    const Icon(Icons.check, size: 15, color: AppColors.navy),
+                    const SizedBox(width: 4),
+                    const Text(
                       'CORRECTION',
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0.5,
                         color: AppColors.navy,
+                      ),
+                    ),
+                    const Spacer(),
+                    InkWell(
+                      onTap: () =>
+                          _toggleSaveCorrection(original, correction, why),
+                      borderRadius: BorderRadius.circular(4),
+                      child: Padding(
+                        padding: const EdgeInsets.all(2),
+                        child: Icon(
+                          saved ? Icons.bookmark : Icons.bookmark_border,
+                          size: 18,
+                          color: AppColors.navy,
+                        ),
                       ),
                     ),
                   ],
@@ -1157,6 +1344,29 @@ class SettingsScreen extends StatelessWidget {
             },
           ),
           ListTile(
+            leading: const Icon(Icons.people_outline),
+            title: const Text('Friends'),
+            subtitle: const Text('Chat with a friend and correct each other'),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const FriendsScreen()),
+              );
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.bookmark_border),
+            title: const Text('Saved corrections'),
+            subtitle: const Text('Review corrections you bookmarked'),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (context) => const SavedCorrectionsScreen()),
+              );
+            },
+          ),
+          ListTile(
             leading: const Icon(Icons.schedule),
             title: const Text('Scheduled messages'),
             onTap: () {
@@ -1178,7 +1388,7 @@ class SettingsScreen extends StatelessWidget {
                 context,
                 MaterialPageRoute(
                   builder: (setupCtx) => AccountSetupScreen(
-                    onDone: () => _openChat(setupCtx),
+                    onDone: () => _openHome(setupCtx),
                   ),
                 ),
                 (route) => false,
@@ -1187,6 +1397,178 @@ class SettingsScreen extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class SavedCorrectionsScreen extends StatefulWidget {
+  const SavedCorrectionsScreen({super.key});
+
+  @override
+  State<SavedCorrectionsScreen> createState() => _SavedCorrectionsScreenState();
+}
+
+class _SavedCorrectionsScreenState extends State<SavedCorrectionsScreen> {
+  List<Map<String, dynamic>> _saved = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String raw = prefs.getString('saved_corrections') ?? '[]';
+    final List decoded = jsonDecode(raw) as List;
+    setState(() {
+      // Newest first.
+      _saved = decoded.cast<Map<String, dynamic>>().reversed.toList();
+      _loading = false;
+    });
+  }
+
+  Future<void> _delete(Map<String, dynamic> item) async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() => _saved.remove(item));
+    // Persist the remaining list (stored oldest-first, so reverse back).
+    await prefs.setString(
+        'saved_corrections', jsonEncode(_saved.reversed.toList()));
+  }
+
+  // Build the same colored track-changes spans the chat correction card uses.
+  List<InlineSpan> _diffSpans(String original, String correction) {
+    final segs = _wordDiff(original, correction);
+    final spans = <InlineSpan>[];
+    for (final s in segs) {
+      switch (s.op) {
+        case _DiffOp.equal:
+          spans.add(TextSpan(text: '${s.text} '));
+          break;
+        case _DiffOp.delete:
+          spans.add(TextSpan(
+            text: '${s.text} ',
+            style: const TextStyle(
+              color: AppColors.deletionRed,
+              decoration: TextDecoration.lineThrough,
+            ),
+          ));
+          break;
+        case _DiffOp.insert:
+          spans.add(TextSpan(
+            text: '${s.text} ',
+            style: const TextStyle(
+              color: AppColors.correctionGreen,
+              fontWeight: FontWeight.w600,
+            ),
+          ));
+          break;
+      }
+    }
+    return spans;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Saved corrections')),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _saved.isEmpty
+              ? const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(32),
+                    child: Text(
+                      'No saved corrections yet.\n\nTap the bookmark on a '
+                      'correction card in chat to save it here for review.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: AppColors.tipText, fontSize: 15),
+                    ),
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  itemCount: _saved.length,
+                  itemBuilder: (context, i) {
+                    final item = _saved[i];
+                    final why = (item['why'] ?? '') as String;
+                    return Container(
+                      margin: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      decoration: const BoxDecoration(
+                        color: AppColors.white,
+                        border: Border(
+                          left: BorderSide(color: AppColors.gold, width: 3),
+                          top: BorderSide(
+                              color: AppColors.borderTint, width: 0.5),
+                          right: BorderSide(
+                              color: AppColors.borderTint, width: 0.5),
+                          bottom: BorderSide(
+                              color: AppColors.borderTint, width: 0.5),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text.rich(
+                            TextSpan(
+                              style: const TextStyle(
+                                color: AppColors.body,
+                                fontSize: 15,
+                                height: 1.55,
+                              ),
+                              children: _diffSpans(
+                                item['original'] as String,
+                                item['correction'] as String,
+                              ),
+                            ),
+                          ),
+                          if (why.isNotEmpty) ...[
+                            const SizedBox(height: 7),
+                            const Divider(
+                                height: 1,
+                                thickness: 0.5,
+                                color: AppColors.divider),
+                            const SizedBox(height: 7),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Icon(Icons.lightbulb_outline,
+                                    size: 14, color: AppColors.tipIcon),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    why,
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      fontStyle: FontStyle.italic,
+                                      color: AppColors.tipText,
+                                      height: 1.5,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton.icon(
+                              onPressed: () => _delete(item),
+                              icon: const Icon(Icons.delete_outline, size: 18),
+                              label: const Text('Remove'),
+                              style: TextButton.styleFrom(
+                                foregroundColor: AppColors.tipText,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
     );
   }
 }

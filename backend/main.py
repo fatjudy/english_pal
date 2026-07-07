@@ -1,5 +1,8 @@
 import os
 import re
+import hashlib
+import hmac
+import secrets
 import unicodedata
 import anthropic
 
@@ -467,3 +470,328 @@ def chat_save(request: ChatSave):
 def chat_load(request: DeviceRequest):
     chat = db.load_chat(request.deviceId)
     return {"chat": chat}
+
+
+# ---------- accounts / auth (email + password) ----------
+
+# Passwords are stored ONLY as a salted PBKDF2 hash, never in plain text.
+# PBKDF2 is in Python's standard library, so this needs no extra dependency
+# (handy when installing packages from China is flaky). bcrypt/argon2 are the
+# usual production upgrades later.
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac(
+        "sha256", password.encode(), bytes.fromhex(salt), 200_000
+    )
+    return f"pbkdf2_sha256$200000${salt}${dk.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        _algo, iterations, salt, expected = stored.split("$")
+        dk = hashlib.pbkdf2_hmac(
+            "sha256", password.encode(), bytes.fromhex(salt), int(iterations)
+        )
+        # compare_digest avoids leaking timing information.
+        return hmac.compare_digest(dk.hex(), expected)
+    except Exception:
+        return False
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    username: str
+    displayName: str = ""
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+def _public_user(user: dict) -> dict:
+    # Everything about the user EXCEPT the password hash — safe to send to the app.
+    return {
+        "userId": user["user_id"],
+        "email": user["email"],
+        "username": user["username"],
+        "displayName": user["display_name"],
+        "partnerViewPref": user["partner_view_pref"],
+    }
+
+
+@app.post("/auth/register")
+def auth_register(request: RegisterRequest):
+    email = request.email.strip().lower()
+    username = request.username.strip()
+
+    if "@" not in email or "." not in email:
+        return {"ok": False, "error": "Please enter a valid email address."}
+    if len(request.password) < 6:
+        return {"ok": False, "error": "Password must be at least 6 characters."}
+    if len(username) < 2:
+        return {"ok": False, "error": "Please choose a username."}
+
+    if db.get_user_by_email(email):
+        return {"ok": False, "error": "That email is already registered."}
+    if db.get_user_by_username(username):
+        return {"ok": False, "error": "That username is taken."}
+
+    user_id = db.create_user(
+        email,
+        hash_password(request.password),
+        username,
+        request.displayName.strip() or username,
+    )
+    token = db.create_session(user_id)
+    user = db.get_user_by_id(user_id)
+    return {"ok": True, "token": token, "user": _public_user(user)}
+
+
+@app.post("/auth/login")
+def auth_login(request: LoginRequest):
+    email = request.email.strip().lower()
+    user = db.get_user_by_email(email)
+    if user is None or not verify_password(request.password, user["password_hash"]):
+        return {"ok": False, "error": "Wrong email or password."}
+    token = db.create_session(user["user_id"])
+    return {"ok": True, "token": token, "user": _public_user(user)}
+
+
+class ContinueRequest(BaseModel):
+    email: str
+    password: str
+    mode: str = "auto"  # "login", "signup", or "auto" (log in or create)
+
+
+def _unique_username(base: str) -> str:
+    """Auto-pick a username for a new account from the email's local part,
+    adding a number if it's already taken (e.g. 'judy', 'judy2', ...)."""
+    base = re.sub(r"[^a-zA-Z0-9_]", "", base) or "user"
+    candidate, i = base, 1
+    while db.get_user_by_username(candidate):
+        i += 1
+        candidate = f"{base}{i}"
+    return candidate
+
+
+# The single "Continue with email" endpoint. The app's Log in / Create account
+# toggle sends mode="login" or "signup"; "auto" (the default) logs in if the
+# account exists, else creates it.
+@app.post("/auth/continue")
+def auth_continue(request: ContinueRequest):
+    email = request.email.strip().lower()
+    if "@" not in email or "." not in email:
+        return {"ok": False, "error": "Please enter a valid email address."}
+
+    user = db.get_user_by_email(email)
+    # Sign up when explicitly asked, or in auto-mode when there's no account yet.
+    want_signup = request.mode == "signup" or (
+        request.mode == "auto" and user is None
+    )
+
+    if want_signup:
+        if user is not None:
+            return {"ok": False,
+                    "error": "That email is already registered. Try logging in."}
+        if len(request.password) < 6:
+            return {"ok": False,
+                    "error": "Password must be at least 6 characters."}
+        username = _unique_username(email.split("@")[0])
+        user_id = db.create_user(
+            email, hash_password(request.password), username, username
+        )
+        token = db.create_session(user_id)
+        return {
+            "ok": True, "isNew": True,
+            "token": token, "user": _public_user(db.get_user_by_id(user_id)),
+        }
+
+    # Otherwise log in (explicit "login", or "auto" where the account exists).
+    if user is None:
+        return {"ok": False,
+                "error": "No account found for this email. Try creating one."}
+    if not verify_password(request.password, user["password_hash"]):
+        return {"ok": False, "error": "Wrong password for this email."}
+    token = db.create_session(user["user_id"])
+    return {
+        "ok": True, "isNew": False,
+        "token": token, "user": _public_user(user),
+    }
+
+
+# ---------- friends (partner chat) ----------
+
+def _user_for_token(token: str):
+    """Resolve an auth token to the user dict, or None if it's invalid."""
+    user_id = db.get_user_id_for_token(token or "")
+    return db.get_user_by_id(user_id) if user_id is not None else None
+
+
+def _friend_view(user: dict, status: str = "") -> dict:
+    return {
+        "userId": user["user_id"],
+        "username": user["username"],
+        "displayName": user["display_name"],
+        "status": status,  # none | pending_out | pending_in | friends
+    }
+
+
+def _relationship_status(me_id: int, other_id: int) -> str:
+    f = db.get_friendship(me_id, other_id)
+    if f is None:
+        return "none"
+    if f["status"] == "accepted":
+        return "friends"
+    return "pending_out" if f["requester_id"] == me_id else "pending_in"
+
+
+class TokenRequest(BaseModel):
+    token: str
+
+
+class SearchRequest(BaseModel):
+    token: str
+    query: str
+
+
+class FriendRequestReq(BaseModel):
+    token: str
+    targetUserId: int
+
+
+class RespondReq(BaseModel):
+    token: str
+    requesterId: int
+    accept: bool
+
+
+@app.post("/friends/search")
+def friends_search(request: SearchRequest):
+    me = _user_for_token(request.token)
+    if me is None:
+        return {"ok": False, "error": "Please log in again."}
+    query = request.query.strip()
+    if not query:
+        return {"ok": True, "results": []}
+    results = [
+        _friend_view(u, _relationship_status(me["user_id"], u["user_id"]))
+        for u in db.search_users(query, me["user_id"])
+    ]
+    return {"ok": True, "results": results}
+
+
+@app.post("/friends/request")
+def friends_request(request: FriendRequestReq):
+    me = _user_for_token(request.token)
+    if me is None:
+        return {"ok": False, "error": "Please log in again."}
+    target = db.get_user_by_id(request.targetUserId)
+    if target is None or target["user_id"] == me["user_id"]:
+        return {"ok": False, "error": "That user doesn't exist."}
+    if db.get_friendship(me["user_id"], target["user_id"]) is not None:
+        return {"ok": False,
+                "error": "You already have a request or friendship with them."}
+    db.create_friend_request(me["user_id"], target["user_id"])
+    return {"ok": True}
+
+
+@app.post("/friends/respond")
+def friends_respond(request: RespondReq):
+    me = _user_for_token(request.token)
+    if me is None:
+        return {"ok": False, "error": "Please log in again."}
+    existing = db.get_friendship(me["user_id"], request.requesterId)
+    # Must be a pending request that was sent TO me.
+    if (existing is None or existing["status"] != "pending"
+            or existing["addressee_id"] != me["user_id"]):
+        return {"ok": False, "error": "No pending request from that user."}
+    if request.accept:
+        db.accept_friend_request(request.requesterId, me["user_id"])
+    else:
+        db.delete_friendship(me["user_id"], request.requesterId)
+    return {"ok": True}
+
+
+@app.post("/friends/list")
+def friends_list(request: TokenRequest):
+    me = _user_for_token(request.token)
+    if me is None:
+        return {"ok": False, "error": "Please log in again."}
+    return {
+        "ok": True,
+        "friends": [_friend_view(u, "friends")
+                    for u in db.list_friends(me["user_id"])],
+        "incoming": [_friend_view(u, "pending_in")
+                     for u in db.list_incoming_requests(me["user_id"])],
+    }
+
+
+# ---------- conversations & messages (partner chat) ----------
+
+def _conv_member(me_id: int, conversation_id: int) -> bool:
+    conv = db.get_conversation(conversation_id)
+    return conv is not None and me_id in (conv["user_low"], conv["user_high"])
+
+
+class OpenConvReq(BaseModel):
+    token: str
+    friendUserId: int
+
+
+class SendMsgReq(BaseModel):
+    token: str
+    conversationId: int
+    text: str
+
+
+class FetchMsgReq(BaseModel):
+    token: str
+    conversationId: int
+    sinceId: int = 0
+
+
+@app.post("/conversation/open")
+def conversation_open(request: OpenConvReq):
+    me = _user_for_token(request.token)
+    if me is None:
+        return {"ok": False, "error": "Please log in again."}
+    friend = db.get_user_by_id(request.friendUserId)
+    if friend is None:
+        return {"ok": False, "error": "That user doesn't exist."}
+    # You can only open a conversation with an accepted friend.
+    rel = db.get_friendship(me["user_id"], friend["user_id"])
+    if rel is None or rel["status"] != "accepted":
+        return {"ok": False, "error": "You can only chat with your friends."}
+    conv_id = db.get_or_create_conversation(me["user_id"], friend["user_id"])
+    return {"ok": True, "conversationId": conv_id,
+            "friend": _friend_view(friend, "friends")}
+
+
+@app.post("/message/send")
+def message_send(request: SendMsgReq):
+    me = _user_for_token(request.token)
+    if me is None:
+        return {"ok": False, "error": "Please log in again."}
+    text = request.text.strip()
+    if not text:
+        return {"ok": False, "error": "Message is empty."}
+    if len(text) > MAX_MESSAGE_CHARS:
+        return {"ok": False, "error": "That message is too long."}
+    if not _conv_member(me["user_id"], request.conversationId):
+        return {"ok": False, "error": "That isn't your conversation."}
+    msg = db.add_message(request.conversationId, me["user_id"], text)
+    return {"ok": True, "message": msg}
+
+
+@app.post("/message/fetch")
+def message_fetch(request: FetchMsgReq):
+    me = _user_for_token(request.token)
+    if me is None:
+        return {"ok": False, "error": "Please log in again."}
+    if not _conv_member(me["user_id"], request.conversationId):
+        return {"ok": False, "error": "That isn't your conversation."}
+    return {"ok": True,
+            "messages": db.get_messages(request.conversationId,
+                                        request.sinceId)}

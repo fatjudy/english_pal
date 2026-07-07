@@ -24,7 +24,6 @@ class _L {
 class LoginScreen extends StatelessWidget {
   final VoidCallback? onGoogle;
   final VoidCallback? onEmail;
-  final VoidCallback? onCreateAccount;
   final VoidCallback? onTerms;
   final VoidCallback? onPrivacy;
 
@@ -32,7 +31,6 @@ class LoginScreen extends StatelessWidget {
     super.key,
     this.onGoogle,
     this.onEmail,
-    this.onCreateAccount,
     this.onTerms,
     this.onPrivacy,
   });
@@ -82,15 +80,12 @@ class LoginScreen extends StatelessWidget {
 
                   const SizedBox(height: 44),
 
-                  // 2. Login options.
+                  // 2. Login options. Each one both logs in and, if the
+                  // account is new, creates it — so there's no separate
+                  // "create account" step.
                   _googleButton(),
                   const SizedBox(height: 14),
                   _emailButton(),
-
-                  const SizedBox(height: 26),
-
-                  // 3. Sign in / create account.
-                  _createAccountRow(),
 
                   const Spacer(flex: 4),
 
@@ -210,31 +205,6 @@ class LoginScreen extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-
-  // --- sign in / create account --------------------------------------------
-
-  Widget _createAccountRow() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const Text(
-          "New here? ",
-          style: TextStyle(fontSize: 17, color: _L.bodyText),
-        ),
-        GestureDetector(
-          onTap: onCreateAccount ?? () {},
-          child: const Text(
-            'Create an account',
-            style: TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w600,
-              color: _L.yellow,
-            ),
-          ),
-        ),
-      ],
     );
   }
 
