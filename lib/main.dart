@@ -8,6 +8,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 import 'package:flutter_timezone/flutter_timezone.dart';
+import 'onboarding_screen.dart';
 
 final FlutterLocalNotificationsPlugin notificationsPlugin =
     FlutterLocalNotificationsPlugin();
@@ -295,7 +296,10 @@ class MyApp extends StatelessWidget {
               body: Center(child: CircularProgressIndicator()),
             );
           }
-          return snapshot.data! ? const ChatScreen() : const SetupScreen();
+          if (snapshot.data!) return const ChatScreen();
+          // New users see the welcome/onboarding carousel first.
+          // Sign up / Log in are not wired yet — the second page comes later.
+          return const OnboardingScreen();
         },
       ),
     );
