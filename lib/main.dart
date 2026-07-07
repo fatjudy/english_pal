@@ -12,28 +12,24 @@ import 'package:flutter_timezone/flutter_timezone.dart';
 final FlutterLocalNotificationsPlugin notificationsPlugin =
     FlutterLocalNotificationsPlugin();
 
-// Muted / dusty palette (see UI design spec).
+// Navy / gold (bold) palette (see UI design spec).
 class AppColors {
-  static const blue = Color(0xFF93A8B5); // user bubbles, send button
-  static const blueDeep = Color(0xFF6E8593); // header background
-  static const sage = Color(0xFF849A8F); // bot bubbles, correction accent
-  static const sageDeep = Color(0xFF5C7268); // "Correction" label + check
-  static const apricot = Color(0xFFDAC4AD); // avatar fill, warm surface
-  static const rose = Color(0xFFBC8F8E); // reserved accent
-  static const moss = Color(0xFF8C9E7D); // reserved accent
-  static const pageBg = Color(0xFFF3ECE2); // app background
-  static const surface = Color(0xFFFFFFFF); // cards / bubble-adjacent surfaces
+  static const navy = Color(0xFF233A66); // header, user bubbles, send button
+  static const yellow = Color(0xFFFFD691); // avatar fill, send icon, top border
+  static const gold = Color(0xFFFFD691); // bot bubbles, correction accent, tips
+  static const coral = Color(0xFFFF6E80); // punchy accent, used sparingly
+  static const white = Color(0xFFFFFFFF); // correction box, input field
+  static const pageBg = Color(0xFFFBF6EC); // app background
+  static const borderTint = Color(0xFFE3D4B5); // hairline borders on light
 
-  static const body = Color(0xFF3A3A38); // dark body text on light surfaces
-  static const subtitle = Color(0xFFDCE6EB); // header subtitle
-  static const inputBorder = Color(0xFFC7B8A6); // input field border tint
-  static const divider = Color(0xFFEDE4D8); // pale apricot divider
-  static const avatarIcon = Color(0xFF5A4634); // robot icon brown
+  static const body = Color(0xFF2A2A2A); // body text on light surfaces
+  static const divider = Color(0xFFF0E6D0); // correction box divider
+  static const avatarIcon = Color(0xFF233A66); // robot icon (navy)
 
-  // Correction signal colors (kept as universal red/green, muted to fit).
-  static const deletionRed = Color(0xFFA8443F);
-  static const correctionGreen = Color(0xFF4F7A3E);
-  static const tipAmber = Color(0xFFA88A5C);
+  // Correction signal colors (universal red/green, full strength here).
+  static const deletionRed = Color(0xFFC0392B);
+  static const correctionGreen = Color(0xFF2E7D32);
+  static const tipIcon = Color(0xFFD7A859); // gold lightbulb
   static const tipText = Color(0xFF6B6862);
 }
 
@@ -42,7 +38,7 @@ class AppColors {
 Widget palAvatar({double radius = 16}) {
   return CircleAvatar(
     radius: radius,
-    backgroundColor: AppColors.apricot,
+    backgroundColor: AppColors.yellow,
     backgroundImage: const AssetImage('assets/pal_avatar.png'),
   );
 }
@@ -252,8 +248,8 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = ColorScheme.fromSeed(
-      seedColor: AppColors.blue,
-      primary: AppColors.blue,
+      seedColor: AppColors.navy,
+      primary: AppColors.navy,
       brightness: Brightness.light,
     );
     return MaterialApp(
@@ -263,14 +259,14 @@ class MyApp extends StatelessWidget {
         colorScheme: scheme,
         scaffoldBackgroundColor: AppColors.pageBg,
         appBarTheme: const AppBarTheme(
-          backgroundColor: AppColors.blueDeep,
+          backgroundColor: AppColors.navy,
           foregroundColor: Colors.white,
           centerTitle: false,
           elevation: 0,
         ),
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
-            backgroundColor: AppColors.blue,
+            backgroundColor: AppColors.navy,
             foregroundColor: Colors.white,
             shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(14)),
@@ -282,12 +278,12 @@ class MyApp extends StatelessWidget {
         chipTheme: ChipThemeData(
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(20)),
-          side: const BorderSide(color: AppColors.inputBorder),
-          selectedColor: AppColors.sage,
+          side: const BorderSide(color: AppColors.borderTint),
+          selectedColor: AppColors.gold,
         ),
-        listTileTheme: const ListTileThemeData(iconColor: AppColors.sageDeep),
+        listTileTheme: const ListTileThemeData(iconColor: AppColors.navy),
         floatingActionButtonTheme: const FloatingActionButtonThemeData(
-          backgroundColor: AppColors.blue,
+          backgroundColor: AppColors.navy,
           foregroundColor: Colors.white,
         ),
       ),
@@ -571,7 +567,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
             decoration: BoxDecoration(
-              color: isUser ? AppColors.blue : AppColors.sage,
+              color: isUser ? AppColors.navy : AppColors.gold,
               borderRadius: BorderRadius.only(
                 topLeft: const Radius.circular(14),
                 topRight: const Radius.circular(14),
@@ -581,8 +577,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ),
             child: Text(
               text,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: isUser ? Colors.white : Colors.black,
                 fontSize: 14,
                 height: 1.45,
               ),
@@ -615,7 +611,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             text: '${s.text} ',
             style: const TextStyle(
               color: AppColors.correctionGreen,
-              fontWeight: FontWeight.w500,
+              fontWeight: FontWeight.w600,
             ),
           ));
           break;
@@ -632,27 +628,35 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: const BoxDecoration(
-              color: AppColors.surface,
+              color: AppColors.white,
               border: Border(
-                left: BorderSide(color: AppColors.sage, width: 3),
-                top: BorderSide(color: AppColors.sage, width: 0.5),
-                right: BorderSide(color: AppColors.sage, width: 0.5),
-                bottom: BorderSide(color: AppColors.sage, width: 0.5),
+                left: BorderSide(color: AppColors.gold, width: 3),
+                top: BorderSide(color: AppColors.borderTint, width: 0.5),
+                right: BorderSide(color: AppColors.borderTint, width: 0.5),
+                bottom: BorderSide(color: AppColors.borderTint, width: 0.5),
               ),
+              boxShadow: [
+                BoxShadow(
+                  color: Color(0x14233A66), // navy at ~8% opacity
+                  blurRadius: 3,
+                  offset: Offset(0, 1),
+                ),
+              ],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: const [
-                    Icon(Icons.check, size: 15, color: AppColors.sageDeep),
+                    Icon(Icons.check, size: 15, color: AppColors.navy),
                     SizedBox(width: 4),
                     Text(
-                      'Correction',
+                      'CORRECTION',
                       style: TextStyle(
                         fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: AppColors.sageDeep,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.5,
+                        color: AppColors.navy,
                       ),
                     ),
                   ],
@@ -677,7 +681,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Icon(Icons.lightbulb_outline,
-                          size: 14, color: AppColors.tipAmber),
+                          size: 14, color: AppColors.tipIcon),
                       const SizedBox(width: 4),
                       Expanded(
                         child: Text(
@@ -734,7 +738,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
           decoration: const BoxDecoration(
-            color: AppColors.sage,
+            color: AppColors.gold,
             borderRadius: BorderRadius.only(
               topLeft: Radius.circular(14),
               topRight: Radius.circular(14),
@@ -745,7 +749,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           child: Text(
             '$palName is typing…',
             style: const TextStyle(
-              color: Colors.white,
+              color: AppColors.navy,
               fontSize: 14,
               fontStyle: FontStyle.italic,
             ),
@@ -771,17 +775,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    palName,
+                    palName.toUpperCase(),
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 15,
-                      fontWeight: FontWeight.w500,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.5,
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),
                   const Text(
                     'always here to help',
-                    style: TextStyle(color: AppColors.subtitle, fontSize: 12),
+                    style: TextStyle(color: AppColors.gold, fontSize: 12),
                   ),
                 ],
               ),
@@ -835,7 +840,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             decoration: const BoxDecoration(
               color: AppColors.pageBg,
               border: Border(
-                top: BorderSide(color: AppColors.apricot, width: 0.5),
+                top: BorderSide(color: AppColors.yellow, width: 0.5),
               ),
             ),
             child: SafeArea(
@@ -860,18 +865,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           hintStyle: TextStyle(color: Colors.grey.shade500),
                           counterText: '',
                           filled: true,
-                          fillColor: AppColors.surface,
+                          fillColor: AppColors.white,
                           contentPadding: const EdgeInsets.symmetric(
                               horizontal: 16, vertical: 10),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(20),
                             borderSide: const BorderSide(
-                                color: AppColors.inputBorder, width: 0.5),
+                                color: AppColors.borderTint, width: 0.5),
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(20),
                             borderSide: const BorderSide(
-                                color: AppColors.blueDeep, width: 1),
+                                color: AppColors.navy, width: 1),
                           ),
                         ),
                       ),
@@ -881,13 +886,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       width: 44,
                       height: 44,
                       child: Material(
-                        color: AppColors.blue,
+                        color: AppColors.navy,
                         shape: const CircleBorder(),
                         child: InkWell(
                           customBorder: const CircleBorder(),
                           onTap: _sendMessage,
                           child: const Icon(Icons.send,
-                              color: Colors.white, size: 20),
+                              color: AppColors.yellow, size: 20),
                         ),
                       ),
                     ),
