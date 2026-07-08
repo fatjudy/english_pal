@@ -180,8 +180,11 @@ Authenticated endpoints take the token; the backend resolves it to a `user_id`.
   1 original+card / 2 corrected only / 3 original only). Settings → "What your
   chat partner sees" (3-option screen); partner chat renders a shared card
   left-aligned for the friend. Verified end-to-end (all 3 modes) via the API.
-- **Phase 5 — Polish:** unread badges, delivered state, empty / partner-left
-  edge cases. _(Conversation list already built early — see below.)_
+- **Phase 5 — Polish:** ✅ done. `/conversation/list` (friends + last-message
+  preview, id, time; sorted by recency); Chats list shows the last message +
+  relative time and an **unread badge** (navy dot + bold) driven by a
+  locally-stored last-seen id per conversation (cleared when you open the chat);
+  empty states ("No friends yet", "Tap to start chatting"). Verified in-app.
 
 **Chats home** _(built early)_ — `chats_list_screen.dart` is the app's home
 after login/setup: a list of the AI pal (→ `ChatScreen`) plus accepted friends

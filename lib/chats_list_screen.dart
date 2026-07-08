@@ -19,6 +19,7 @@ class ChatsListScreen extends StatefulWidget {
 
 class _ChatsListScreenState extends State<ChatsListScreen> {
   String _palName = 'Mia';
+  String _aiPreview = 'Your AI pal — always here';
   List<Map<String, dynamic>> _friends = [];
   bool _loading = true;
 
@@ -30,13 +31,30 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
 
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
-    final res = await loadFriends();
+    final aiPreview = await loadAiChatPreview();
+    final res = await loadConversations();
+    if (!mounted) return;
+    final list = res['ok'] == true
+        ? List<Map<String, dynamic>>.from(res['conversations'] ?? [])
+        : <Map<String, dynamic>>[];
+    // Mark each chat unread if the newest message is newer than what we've seen
+    // on this device and it wasn't one we sent.
+    for (final c in list) {
+      final convId = c['conversationId'];
+      final lastId = (c['lastId'] ?? 0) as int;
+      if (convId != null && lastId > 0 && c['lastMine'] != true) {
+        final seen = await loadLastSeen(convId as int);
+        c['unread'] = lastId > seen;
+      } else {
+        c['unread'] = false;
+      }
+    }
     if (!mounted) return;
     setState(() {
       _palName = prefs.getString('palName') ?? 'Mia';
-      _friends = res['ok'] == true
-          ? List<Map<String, dynamic>>.from(res['friends'] ?? [])
-          : [];
+      _aiPreview =
+          aiPreview.isNotEmpty ? aiPreview : 'Your AI pal — always here';
+      _friends = list;
       _loading = false;
     });
   }
@@ -44,6 +62,13 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   String _name(Map f) {
     final d = (f['displayName'] ?? '').toString();
     return d.isNotEmpty ? d : (f['username'] ?? '').toString();
+  }
+
+  // The one-line message preview under a friend's name.
+  String _preview(Map f) {
+    final text = (f['lastText'] ?? '').toString();
+    if (text.isEmpty) return 'Tap to start chatting';
+    return f['lastMine'] == true ? 'You: $text' : text;
   }
 
   @override
@@ -82,9 +107,12 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                   _chatTile(
                     avatar: palAvatar(radius: 24),
                     title: _palName,
-                    subtitle: 'Your AI pal — always here',
-                    onTap: () => Navigator.push(context,
-                        MaterialPageRoute(builder: (_) => const ChatScreen())),
+                    subtitle: _aiPreview,
+                    onTap: () async {
+                      await Navigator.push(context,
+                          MaterialPageRoute(builder: (_) => const ChatScreen()));
+                      _load(); // refresh Mia's preview after chatting
+                    },
                   ),
                   const Divider(height: 1),
                   if (_friends.isEmpty)
@@ -101,13 +129,18 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                       (f) => _chatTile(
                         avatar: _friendAvatar(f),
                         title: _name(f),
-                        subtitle: '@${f['username']}',
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => PartnerChatScreen(friend: f),
-                          ),
-                        ),
+                        subtitle: _preview(f),
+                        time: relativeTime((f['lastTime'] ?? '') as String),
+                        unread: f['unread'] == true,
+                        onTap: () async {
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => PartnerChatScreen(friend: f),
+                            ),
+                          );
+                          _load(); // clear unread + refresh preview on return
+                        },
                       ),
                     ),
                 ],
@@ -131,14 +164,57 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     required String title,
     required String subtitle,
     required VoidCallback onTap,
+    String time = '',
+    bool unread = false,
   }) {
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       leading: avatar,
       title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-      subtitle: Text(subtitle),
-      trailing: const Icon(Icons.chevron_right, color: AppColors.tipText),
+      subtitle: Text(
+        subtitle,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: unread ? AppColors.body : AppColors.tipText,
+          fontWeight: unread ? FontWeight.w600 : FontWeight.normal,
+        ),
+      ),
+      trailing: _trailing(time, unread),
       onTap: onTap,
+    );
+  }
+
+  // Right side of a chat row: a relative time on top and, when there are unread
+  // messages, a small navy dot beneath it.
+  Widget _trailing(String time, bool unread) {
+    if (time.isEmpty && !unread) {
+      return const Icon(Icons.chevron_right, color: AppColors.tipText);
+    }
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        if (time.isNotEmpty)
+          Text(time,
+              style: TextStyle(
+                fontSize: 12,
+                color: unread ? AppColors.navy : AppColors.tipText,
+                fontWeight: unread ? FontWeight.w600 : FontWeight.normal,
+              )),
+        const SizedBox(height: 4),
+        if (unread)
+          Container(
+            width: 10,
+            height: 10,
+            decoration: const BoxDecoration(
+              color: AppColors.navy,
+              shape: BoxShape.circle,
+            ),
+          )
+        else
+          const SizedBox(height: 10),
+      ],
     );
   }
 }

@@ -92,6 +92,9 @@ class _PartnerChatScreenState extends State<PartnerChatScreen> {
         setState(() => _messages.addAll(incoming));
         _scrollToBottom();
       }
+      // Remember we've seen up to the newest message, so the Chats list won't
+      // still flag this conversation as unread after we leave.
+      if (_lastId > 0) await saveLastSeen(_conversationId!, _lastId);
     } finally {
       _fetching = false;
     }

@@ -410,6 +410,31 @@ def get_conversation(conversation_id):
     return dict(row) if row else None
 
 
+def find_conversation(user_a, user_b):
+    """The conversation id for a pair if one already exists, else None (unlike
+    get_or_create_conversation, this never creates one — used for listing)."""
+    low, high = (user_a, user_b) if user_a < user_b else (user_b, user_a)
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT id FROM conversations WHERE user_low = ? AND user_high = ?",
+        (low, high),
+    ).fetchone()
+    conn.close()
+    return row["id"] if row else None
+
+
+def get_last_message(conversation_id):
+    """The most recent message in a conversation, or None if it has none."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM messages WHERE conversation_id = ? "
+        "ORDER BY id DESC LIMIT 1",
+        (conversation_id,),
+    ).fetchone()
+    conn.close()
+    return _message_row(row) if row else None
+
+
 def add_message(conversation_id, sender_id, text, corrected="", why="",
                 understood=True, sender_pref=1):
     conn = get_conn()

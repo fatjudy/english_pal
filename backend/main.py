@@ -851,6 +851,35 @@ def conversation_open(request: OpenConvReq):
             "friend": _friend_view(friend, "friends")}
 
 
+@app.post("/conversation/list")
+def conversation_list(request: TokenRequest):
+    """The Chats home list: each friend plus a preview of the last message and
+    its id (the app uses the id, compared against a locally-stored last-seen id,
+    to show unread badges). Friends with no conversation yet come back with
+    conversationId=null and no preview."""
+    me = _user_for_token(request.token)
+    if me is None:
+        return {"ok": False, "error": "Please log in again."}
+    items = []
+    for friend in db.list_friends(me["user_id"]):
+        conv_id = db.find_conversation(me["user_id"], friend["user_id"])
+        last = db.get_last_message(conv_id) if conv_id else None
+        items.append({
+            "userId": friend["user_id"],
+            "username": friend["username"],
+            "displayName": friend["display_name"],
+            "conversationId": conv_id,
+            "lastId": last["id"] if last else 0,
+            "lastText": last["text"] if last else "",
+            "lastMine": bool(last and last["senderId"] == me["user_id"]),
+            "lastTime": last["createdAt"] if last else "",
+        })
+    # Most recently active chats first; friends with no messages sink to the
+    # bottom (empty lastTime sorts last).
+    items.sort(key=lambda x: x["lastTime"], reverse=True)
+    return {"ok": True, "conversations": items}
+
+
 @app.post("/message/send")
 def message_send(request: SendMsgReq):
     me = _user_for_token(request.token)

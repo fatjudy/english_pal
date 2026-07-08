@@ -245,6 +245,61 @@ Future<Map<String, dynamic>> fetchPartnerMessages(int conversationId, int sinceI
     _friendsPost('/message/fetch',
         {'conversationId': conversationId, 'sinceId': sinceId});
 
+// The Chats home list: friends enriched with their last message + its id.
+Future<Map<String, dynamic>> loadConversations() =>
+    _friendsPost('/conversation/list', {});
+
+// The last message in the AI (Mia) chat, for its Chats-list preview. Reads the
+// same locally-saved history the AI chat uses ({text, isUser} maps). Returns an
+// empty string if there's no history yet.
+Future<String> loadAiChatPreview() async {
+  final prefs = await SharedPreferences.getInstance();
+  final saved = prefs.getString('messages');
+  if (saved == null) return '';
+  final list = jsonDecode(saved) as List;
+  if (list.isEmpty) return '';
+  final last = list.last as Map;
+  final text = (last['text'] ?? '').toString();
+  if (text.isEmpty) return '';
+  return last['isUser'] == true ? 'You: $text' : text;
+}
+
+// --- unread tracking (local per-device) ------------------------------------
+// We remember, on the phone, the id of the newest message we've shown for each
+// conversation. A conversation is "unread" when the server's latest id is newer
+// than that AND the latest message isn't one we sent.
+
+Future<int> loadLastSeen(int conversationId) async {
+  final prefs = await SharedPreferences.getInstance();
+  return prefs.getInt('seen_conv_$conversationId') ?? 0;
+}
+
+Future<void> saveLastSeen(int conversationId, int lastId) async {
+  final prefs = await SharedPreferences.getInstance();
+  final current = prefs.getInt('seen_conv_$conversationId') ?? 0;
+  if (lastId > current) {
+    await prefs.setInt('seen_conv_$conversationId', lastId);
+  }
+}
+
+// A short "how long ago" label for chat list timestamps. Input is the ISO UTC
+// string the backend stores; empty string returns empty.
+String relativeTime(String isoUtc) {
+  if (isoUtc.isEmpty) return '';
+  // The backend stores naive UTC (no 'Z'); add one so it's parsed as UTC and
+  // not misread as local time.
+  final normalized =
+      (isoUtc.endsWith('Z') || isoUtc.contains('+')) ? isoUtc : '${isoUtc}Z';
+  final then = DateTime.tryParse(normalized);
+  if (then == null) return '';
+  final diff = DateTime.now().difference(then.toLocal());
+  if (diff.inMinutes < 1) return 'now';
+  if (diff.inMinutes < 60) return '${diff.inMinutes}m';
+  if (diff.inHours < 24) return '${diff.inHours}h';
+  if (diff.inDays < 7) return '${diff.inDays}d';
+  return '${(diff.inDays / 7).floor()}w';
+}
+
 // --- partner-view preference (what your chat partner sees of your messages) --
 // 1 = your original + your correction card, 2 = corrected sentence only,
 // 3 = original only. Sender always still sees their own card either way.
