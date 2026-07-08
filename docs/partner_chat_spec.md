@@ -90,6 +90,12 @@ their own private correction card regardless.
 2. **Corrected only** — the partner sees just your polished sentence.
 3. **Original only** — the partner sees just what you typed, no card.
 
+The **"✓ Looks good!"** note (shown when a message was checked and needed no
+correction) is treated as part of the coaching card: it follows the same
+sharing rule. Only **mode 1** shares it with the partner; modes 2 and 3 hide it.
+You always still see it on your own messages. (Gibberish / non-English gets no
+note either way, via the stored `understood` flag.)
+
 ---
 
 ## 6. Data model (extends `backend/db.py`, same SQLite style)

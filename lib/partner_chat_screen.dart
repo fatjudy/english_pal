@@ -255,6 +255,14 @@ class _PartnerChatScreenState extends State<PartnerChatScreen> {
                                     (m['senderId'] as int) == _myUserId;
                                 final corrected =
                                     (m['corrected'] ?? '') as String;
+                                final understood = m['understood'] != false;
+                                // "Looks good" is part of the coaching card, so
+                                // it follows the same sharing rule: always on
+                                // your own messages (private), and on a friend's
+                                // only when they chose mode 1 (share original +
+                                // card). Modes 2 and 3 share no card, so no note.
+                                final sharesCoaching =
+                                    mine || (m['senderPref'] ?? 1) == 1;
                                 return Column(
                                   crossAxisAlignment:
                                       CrossAxisAlignment.stretch,
@@ -271,6 +279,14 @@ class _PartnerChatScreenState extends State<PartnerChatScreen> {
                                         (m['why'] ?? '') as String,
                                         mine,
                                       ),
+                                    // A checked message with nothing to fix gets
+                                    // a quiet "well done" note (same as the Mia
+                                    // chat), shown only where the coaching is
+                                    // shared (see sharesCoaching above).
+                                    if (sharesCoaching &&
+                                        corrected.isEmpty &&
+                                        understood)
+                                      _looksGoodNote(mine),
                                   ],
                                 );
                               },
@@ -423,6 +439,22 @@ class _PartnerChatScreenState extends State<PartnerChatScreen> {
               ],
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  // A quiet "well done" shown under a message that was checked and needed no
+  // correction — parity with the Mia chat. Aligned like the correction card:
+  // right for your own message, left for a friend's shared one.
+  Widget _looksGoodNote(bool mine) {
+    return Align(
+      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+      child: const Padding(
+        padding: EdgeInsets.only(left: 18, right: 18, bottom: 8, top: 2),
+        child: Text(
+          '✓ Looks good!',
+          style: TextStyle(color: AppColors.correctionGreen, fontSize: 15),
         ),
       ),
     );
