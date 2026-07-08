@@ -370,12 +370,6 @@ def chat(request: ChatRequest):
             tool_choice={"type": "tool", "name": "reply_to_user"},
             messages=convo,
         )
-        # Log cache activity so we can confirm caching is working (read > 0 on
-        # repeat turns). Remove once verified in production.
-        u = response.usage
-        print(f"[chat cache] read={getattr(u, 'cache_read_input_tokens', 0)} "
-              f"write={getattr(u, 'cache_creation_input_tokens', 0)} "
-              f"input={u.input_tokens}")
         data = {}
         for block in response.content:
             if block.type == "tool_use":

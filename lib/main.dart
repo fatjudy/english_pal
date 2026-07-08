@@ -1467,7 +1467,19 @@ class SettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
-      body: ListView(
+      body: const SettingsBody(),
+    );
+  }
+}
+
+// The settings list on its own, so it can be shown either as its own screen
+// (above) or embedded as the 4th tab in the home bottom bar.
+class SettingsBody extends StatelessWidget {
+  const SettingsBody({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
         children: [
           ListTile(
             leading: const Icon(Icons.person),
@@ -1534,7 +1546,6 @@ class SettingsScreen extends StatelessWidget {
             },
           ),
         ],
-      ),
     );
   }
 }

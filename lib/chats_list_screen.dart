@@ -5,9 +5,12 @@ import 'friends_screen.dart';
 import 'partner_chat_screen.dart';
 
 // ---------------------------------------------------------------------------
-// The app's home hub: a list of all your chats. The first entry is your AI pal
-// (opens the existing AI ChatScreen); the rest are your human friends (each
-// opens a PartnerChatScreen). Reached after log in / setup.
+// The app's home hub. A bottom bar splits it into four tabs:
+//   0. AI Bots  — the AI pals you created (opens the AI ChatScreen)
+//   1. Friends  — your real human friends (each opens a PartnerChatScreen)
+//   2. Groups   — group chats (placeholder for now)
+//   3. Settings — the settings list (moved here from the app-bar icon)
+// Reached after log in / setup.
 // ---------------------------------------------------------------------------
 
 class ChatsListScreen extends StatefulWidget {
@@ -18,9 +21,83 @@ class ChatsListScreen extends StatefulWidget {
 }
 
 class _ChatsListScreenState extends State<ChatsListScreen> {
+  int _tab = 0;
+
+  // A key so the shell's "add friend" app-bar action can refresh the Friends
+  // tab after a friend is added.
+  final _friendsKey = GlobalKey<_FriendsTabState>();
+
+  static const _titles = ['AI Bots', 'Friends', 'Groups', 'Settings'];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(_titles[_tab]),
+        actions: _tab == 1
+            ? [
+                IconButton(
+                  icon: const Icon(Icons.person_add_alt),
+                  tooltip: 'Add friend',
+                  onPressed: () async {
+                    await Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => const FriendsScreen()));
+                    _friendsKey.currentState?.reload();
+                  },
+                ),
+              ]
+            : null,
+      ),
+      body: IndexedStack(
+        index: _tab,
+        children: [
+          const _AiBotsTab(),
+          _FriendsTab(key: _friendsKey),
+          const _GroupsTab(),
+          const SettingsBody(),
+        ],
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _tab,
+        onTap: (i) => setState(() => _tab = i),
+        type: BottomNavigationBarType.fixed,
+        selectedItemColor: AppColors.navy,
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.smart_toy_outlined),
+            label: 'AI Bots',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.people_outline),
+            label: 'Friends',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.groups_outlined),
+            label: 'Groups',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.settings_outlined),
+            label: 'Settings',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tab 0 — the AI pals you created. Currently just your one pal (Mia).
+// ---------------------------------------------------------------------------
+class _AiBotsTab extends StatefulWidget {
+  const _AiBotsTab();
+
+  @override
+  State<_AiBotsTab> createState() => _AiBotsTabState();
+}
+
+class _AiBotsTabState extends State<_AiBotsTab> {
   String _palName = 'Mia';
   String _aiPreview = 'Your AI pal — always here';
-  List<Map<String, dynamic>> _friends = [];
   bool _loading = true;
 
   @override
@@ -32,6 +109,62 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
     final aiPreview = await loadAiChatPreview();
+    if (!mounted) return;
+    setState(() {
+      _palName = prefs.getString('palName') ?? 'Mia';
+      _aiPreview =
+          aiPreview.isNotEmpty ? aiPreview : 'Your AI pal — always here';
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView(
+        children: [
+          _chatTile(
+            avatar: palAvatar(radius: 24),
+            title: _palName,
+            subtitle: _aiPreview,
+            onTap: () async {
+              await Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const ChatScreen()));
+              _load(); // refresh Mia's preview after chatting
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tab 1 — your real human friends and the chats you have with them.
+// ---------------------------------------------------------------------------
+class _FriendsTab extends StatefulWidget {
+  const _FriendsTab({super.key});
+
+  @override
+  State<_FriendsTab> createState() => _FriendsTabState();
+}
+
+class _FriendsTabState extends State<_FriendsTab> {
+  List<Map<String, dynamic>> _friends = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  // Public so the shell can refresh after a friend is added.
+  void reload() => _load();
+
+  Future<void> _load() async {
     final res = await loadConversations();
     if (!mounted) return;
     final list = res['ok'] == true
@@ -51,9 +184,6 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     }
     if (!mounted) return;
     setState(() {
-      _palName = prefs.getString('palName') ?? 'Mia';
-      _aiPreview =
-          aiPreview.isNotEmpty ? aiPreview : 'Your AI pal — always here';
       _friends = list;
       _loading = false;
     });
@@ -73,78 +203,43 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Chats'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.person_add_alt),
-            tooltip: 'Friends',
-            onPressed: () async {
-              await Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const FriendsScreen()));
-              _load(); // a friend may have been added
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            tooltip: 'Settings',
-            onPressed: () async {
-              await Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const SettingsScreen()));
-              _load();
-            },
-          ),
-        ],
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _load,
-              child: ListView(
-                children: [
-                  // Your AI pal — always available.
-                  _chatTile(
-                    avatar: palAvatar(radius: 24),
-                    title: _palName,
-                    subtitle: _aiPreview,
-                    onTap: () async {
-                      await Navigator.push(context,
-                          MaterialPageRoute(builder: (_) => const ChatScreen()));
-                      _load(); // refresh Mia's preview after chatting
-                    },
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: _friends.isEmpty
+          ? ListView(
+              children: const [
+                Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text(
+                    'No friends yet. Tap the person icon above to find and '
+                    'add friends to chat with.',
+                    style: TextStyle(color: AppColors.tipText),
                   ),
-                  const Divider(height: 1),
-                  if (_friends.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Text(
-                        'No friends yet. Tap the person icon above to find and '
-                        'add friends to chat with.',
-                        style: TextStyle(color: AppColors.tipText),
-                      ),
-                    )
-                  else
-                    ..._friends.map(
-                      (f) => _chatTile(
-                        avatar: _friendAvatar(f),
-                        title: _name(f),
-                        subtitle: _preview(f),
-                        time: relativeTime((f['lastTime'] ?? '') as String),
-                        unread: f['unread'] == true,
-                        onTap: () async {
-                          await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => PartnerChatScreen(friend: f),
-                            ),
-                          );
-                          _load(); // clear unread + refresh preview on return
-                        },
-                      ),
+                ),
+              ],
+            )
+          : ListView(
+              children: _friends
+                  .map(
+                    (f) => _chatTile(
+                      avatar: _friendAvatar(f),
+                      title: _name(f),
+                      subtitle: _preview(f),
+                      time: relativeTime((f['lastTime'] ?? '') as String),
+                      unread: f['unread'] == true,
+                      onTap: () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => PartnerChatScreen(friend: f),
+                          ),
+                        );
+                        _load(); // clear unread + refresh preview on return
+                      },
                     ),
-                ],
-              ),
+                  )
+                  .toList(),
             ),
     );
   }
@@ -158,63 +253,93 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
               color: Colors.white, fontWeight: FontWeight.w700),
         ),
       );
+}
 
-  Widget _chatTile({
-    required Widget avatar,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-    String time = '',
-    bool unread = false,
-  }) {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      leading: avatar,
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-      subtitle: Text(
-        subtitle,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          color: unread ? AppColors.body : AppColors.tipText,
-          fontWeight: unread ? FontWeight.w600 : FontWeight.normal,
+// ---------------------------------------------------------------------------
+// Tab 2 — group chats. Not built yet; friendly placeholder for now.
+// ---------------------------------------------------------------------------
+class _GroupsTab extends StatelessWidget {
+  const _GroupsTab();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.groups_outlined, size: 56, color: AppColors.tipText),
+            SizedBox(height: 12),
+            Text(
+              'Group chats are coming soon.',
+              style: TextStyle(color: AppColors.tipText),
+            ),
+          ],
         ),
       ),
-      trailing: _trailing(time, unread),
-      onTap: onTap,
     );
   }
+}
 
-  // Right side of a chat row: a relative time on top and, when there are unread
-  // messages, a small navy dot beneath it.
-  Widget _trailing(String time, bool unread) {
-    if (time.isEmpty && !unread) {
-      return const Icon(Icons.chevron_right, color: AppColors.tipText);
-    }
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        if (time.isNotEmpty)
-          Text(time,
-              style: TextStyle(
-                fontSize: 12,
-                color: unread ? AppColors.navy : AppColors.tipText,
-                fontWeight: unread ? FontWeight.w600 : FontWeight.normal,
-              )),
-        const SizedBox(height: 4),
-        if (unread)
-          Container(
-            width: 10,
-            height: 10,
-            decoration: const BoxDecoration(
-              color: AppColors.navy,
-              shape: BoxShape.circle,
-            ),
-          )
-        else
-          const SizedBox(height: 10),
-      ],
-    );
+// ---------------------------------------------------------------------------
+// Shared chat-row widgets, used by the AI Bots and Friends tabs.
+// ---------------------------------------------------------------------------
+Widget _chatTile({
+  required Widget avatar,
+  required String title,
+  required String subtitle,
+  required VoidCallback onTap,
+  String time = '',
+  bool unread = false,
+}) {
+  return ListTile(
+    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+    leading: avatar,
+    title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+    subtitle: Text(
+      subtitle,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: unread ? AppColors.body : AppColors.tipText,
+        fontWeight: unread ? FontWeight.w600 : FontWeight.normal,
+      ),
+    ),
+    trailing: _trailing(time, unread),
+    onTap: onTap,
+  );
+}
+
+// Right side of a chat row: a relative time on top and, when there are unread
+// messages, a small navy dot beneath it.
+Widget _trailing(String time, bool unread) {
+  if (time.isEmpty && !unread) {
+    return const Icon(Icons.chevron_right, color: AppColors.tipText);
   }
+  return Column(
+    mainAxisAlignment: MainAxisAlignment.center,
+    crossAxisAlignment: CrossAxisAlignment.end,
+    children: [
+      if (time.isNotEmpty)
+        Text(time,
+            style: TextStyle(
+              fontSize: 12,
+              color: unread ? AppColors.navy : AppColors.tipText,
+              fontWeight: unread ? FontWeight.w600 : FontWeight.normal,
+            )),
+      const SizedBox(height: 4),
+      if (unread)
+        Container(
+          width: 10,
+          height: 10,
+          decoration: const BoxDecoration(
+            color: AppColors.navy,
+            shape: BoxShape.circle,
+          ),
+        )
+      else
+        const SizedBox(height: 10),
+    ],
+  );
 }
