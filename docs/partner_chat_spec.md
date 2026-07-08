@@ -190,7 +190,13 @@ Authenticated endpoints take the token; the backend resolves it to a `user_id`.
 after login/setup: a list of the AI pal (→ `ChatScreen`) plus accepted friends
 (→ `PartnerChatScreen`, a Phase-2 placeholder for now). Person-add and settings
 icons in the app bar.
-- **Phase 6 — Real-time:** swap polling → WebSockets (`@app.websocket`).
+- **Phase 6 — Real-time:** ✅ done. `@app.websocket("/ws/{conversation_id}")`
+  (token-authed) + a `ConnectionManager` that pushes each stored message to the
+  other party's live sockets (per-viewer shaped); `/message/send` is async and
+  broadcasts. App uses `web_socket_channel`: connects on open for instant
+  delivery, with an always-on 5s safety poll as a backstop (a half-open socket
+  can't silently lose messages) and backoff reconnection. Verified in-app:
+  instant (~0.7s) delivery, self-heal after a backend restart, reconnect.
 - **Phase 7 — Production niceties:** FCM push for new messages + Google Sign-In.
 
 ---

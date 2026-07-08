@@ -90,6 +90,17 @@ Future<String> getDeviceId() async {
 String get backendBase =>
     kIsWeb ? 'http://127.0.0.1:8000' : 'http://10.0.2.2:8000';
 
+// The WebSocket address for live partner-chat delivery — same host as
+// backendBase but the ws:// scheme (wss:// once the backend is on https).
+String get backendWsBase =>
+    backendBase.replaceFirst('http://', 'ws://').replaceFirst('https://', 'wss://');
+
+// The live channel URL for one conversation, carrying the auth token.
+Future<Uri> partnerSocketUri(int conversationId) async {
+  final token = await _authToken();
+  return Uri.parse('$backendWsBase/ws/$conversationId?token=$token');
+}
+
 // --- cloud storage helpers (best-effort: offline just falls back to local) ---
 
 Future<void> saveProfileToCloud(Map<String, dynamic> profile) async {

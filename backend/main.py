@@ -1,12 +1,13 @@
 import os
 import re
+import asyncio
 import hashlib
 import hmac
 import secrets
 import unicodedata
 import anthropic
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -321,12 +322,24 @@ def chat(request: ChatRequest):
             "summary": request.summary,
         }
 
-    system_instruction = build_system_prompt(request)
+    # Prompt caching: the big instruction prompt (safety rules + coaching + pal
+    # persona) is identical across every turn of a conversation, so we mark it
+    # cacheable — repeat turns pay ~0.1x for it instead of full price. The
+    # running summary changes each turn, so it goes in a SEPARATE, uncached block
+    # AFTER the cached one (a change there mustn't invalidate the cached prefix).
+    system_blocks = [
+        {
+            "type": "text",
+            "text": build_system_prompt(request),
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
     if request.summary:
-        system_instruction += (
-            "\n\nSummary of the earlier conversation (for context):\n"
-            + request.summary
-        )
+        system_blocks.append({
+            "type": "text",
+            "text": "\n\nSummary of the earlier conversation (for context):\n"
+            + request.summary,
+        })
     # Convert to Claude's format and make sure the list starts with a user turn.
     convo = [
         {"role": ROLE_MAP.get(m.role, "user"), "content": m.text}
@@ -334,16 +347,35 @@ def chat(request: ChatRequest):
     ]
     while convo and convo[0]["role"] != "user":
         convo.pop(0)
+    # Also cache the conversation history so far. On Haiku the cached prefix must
+    # reach ~4096 tokens before caching kicks in; the system prompt alone is
+    # under that, so caching the history too lets the combined prefix (tools +
+    # system + past turns) cross the line in real, longer chats.
+    if convo:
+        last = convo[-1]
+        last["content"] = [
+            {
+                "type": "text",
+                "text": last["content"],
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
 
     try:
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=1024,
-            system=system_instruction,
+            system=system_blocks,
             tools=[REPLY_TOOL],
             tool_choice={"type": "tool", "name": "reply_to_user"},
             messages=convo,
         )
+        # Log cache activity so we can confirm caching is working (read > 0 on
+        # repeat turns). Remove once verified in production.
+        u = response.usage
+        print(f"[chat cache] read={getattr(u, 'cache_read_input_tokens', 0)} "
+              f"write={getattr(u, 'cache_creation_input_tokens', 0)} "
+              f"input={u.input_tokens}")
         data = {}
         for block in response.content:
             if block.type == "tool_use":
@@ -816,6 +848,39 @@ def _conv_member(me_id: int, conversation_id: int) -> bool:
     return conv is not None and me_id in (conv["user_low"], conv["user_high"])
 
 
+class ConnectionManager:
+    """Tracks the live WebSocket connections for each conversation so a new
+    message can be pushed instantly to everyone currently viewing it. Each
+    connection remembers which user it belongs to, so an outgoing message can be
+    shaped for that specific viewer (own = full; partner's = per their pref)."""
+
+    def __init__(self):
+        # conversation_id -> list of (websocket, user_id)
+        self.active: dict[int, list[tuple[WebSocket, int]]] = {}
+
+    async def connect(self, conversation_id: int, ws: WebSocket, user_id: int):
+        await ws.accept()
+        self.active.setdefault(conversation_id, []).append((ws, user_id))
+
+    def disconnect(self, conversation_id: int, ws: WebSocket):
+        conns = self.active.get(conversation_id)
+        if not conns:
+            return
+        self.active[conversation_id] = [c for c in conns if c[0] is not ws]
+        if not self.active[conversation_id]:
+            del self.active[conversation_id]
+
+    async def broadcast(self, conversation_id: int, message: dict):
+        for ws, uid in list(self.active.get(conversation_id, [])):
+            try:
+                await ws.send_json(_view_message(message, uid))
+            except Exception:
+                self.disconnect(conversation_id, ws)
+
+
+manager = ConnectionManager()
+
+
 class OpenConvReq(BaseModel):
     token: str
     friendUserId: int
@@ -881,7 +946,7 @@ def conversation_list(request: TokenRequest):
 
 
 @app.post("/message/send")
-def message_send(request: SendMsgReq):
+async def message_send(request: SendMsgReq):
     me = _user_for_token(request.token)
     if me is None:
         return {"ok": False, "error": "Please log in again."}
@@ -895,13 +960,18 @@ def message_send(request: SendMsgReq):
     # The sender's private correction (coaching) is generated and stored with
     # the message. The sender's current "what my partner sees" preference is
     # snapshotted onto the row, so changing it later won't rewrite old messages.
-    corr = generate_correction(text, request.level)
+    # generate_correction makes a blocking model call, so run it off the event
+    # loop to keep WebSocket connections responsive.
+    corr = await asyncio.to_thread(generate_correction, text, request.level)
     msg = db.add_message(
         request.conversationId, me["user_id"], text,
         corrected=corr["correction"], why=corr["why"],
         understood=corr["understood"],
         sender_pref=me["partner_view_pref"] or 1,
     )
+    # Push the new message to anyone currently connected to this conversation
+    # (each gets it shaped for their own view).
+    await manager.broadcast(request.conversationId, msg)
     return {"ok": True, "message": msg}
 
 
@@ -957,3 +1027,28 @@ def prefs_partner_view(request: PartnerViewReq):
         return {"ok": False, "error": "Invalid preference."}
     db.update_partner_view_pref(me["user_id"], request.pref)
     return {"ok": True, "partnerViewPref": request.pref}
+
+
+# ---------- real-time delivery (Phase 6) ----------
+
+@app.websocket("/ws/{conversation_id}")
+async def conversation_ws(websocket: WebSocket, conversation_id: int):
+    """A live channel for one conversation. The client connects with its auth
+    token as a query param (?token=...); we verify it belongs to the pair, then
+    push each new message (see manager.broadcast in /message/send). Sending
+    still goes over HTTP /message/send — this socket is receive-only."""
+    token = websocket.query_params.get("token", "")
+    user = _user_for_token(token)
+    if user is None or not _conv_member(user["user_id"], conversation_id):
+        await websocket.close(code=4401)  # unauthorized / not a member
+        return
+    await manager.connect(conversation_id, websocket, user["user_id"])
+    try:
+        # We don't expect inbound data; receiving just keeps the socket open and
+        # lets us notice when the client disconnects.
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(conversation_id, websocket)
+    except Exception:
+        manager.disconnect(conversation_id, websocket)

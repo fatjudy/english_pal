@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import 'main.dart';
 
 // ---------------------------------------------------------------------------
@@ -29,6 +31,11 @@ class _PartnerChatScreenState extends State<PartnerChatScreen> {
   bool _sending = false;
   bool _fetching = false; // guards against overlapping fetches
   Timer? _pollTimer;
+  WebSocketChannel? _channel; // live delivery (replaces polling when connected)
+  StreamSubscription? _wsSub;
+  Timer? _reconnectTimer;
+  int _reconnectAttempts = 0;
+  bool _wsConnecting = false;
   String? _error;
   Set<String> _savedKeys = {}; // corrections already bookmarked
 
@@ -46,17 +53,92 @@ class _PartnerChatScreenState extends State<PartnerChatScreen> {
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _reconnectTimer?.cancel();
+    _wsSub?.cancel();
+    _channel?.sink.close();
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
   }
 
-  // Ask the server for new messages every 2 seconds while this chat is open, so
-  // replies appear on their own. Cancelled in dispose when we leave the screen.
-  void _startPolling() {
+  // Open the live WebSocket for this conversation. Messages the server pushes
+  // are appended instantly. A silently-dropped ("half-open") socket may never
+  // fire onDone, so we do NOT rely on it alone: a lightweight safety poll runs
+  // the whole time (see _startSafetyPoll) as a guaranteed backstop, and if the
+  // socket does report a close we retry it with a backoff to restore instant
+  // delivery.
+  Future<void> _connectWs() async {
+    if (!mounted || _wsConnecting || _conversationId == null) return;
+    _wsConnecting = true;
+    try {
+      final uri = await partnerSocketUri(_conversationId!);
+      final channel = WebSocketChannel.connect(uri);
+      // ready throws if the connection can't be established (e.g. server down).
+      await channel.ready;
+      if (!mounted) {
+        channel.sink.close();
+        return;
+      }
+      _channel = channel;
+      _reconnectAttempts = 0; // connected — reset the backoff
+      _wsSub = channel.stream.listen(
+        _onWsData,
+        onError: (_) => _onWsClosed(),
+        onDone: _onWsClosed,
+        cancelOnError: true,
+      );
+    } catch (_) {
+      _onWsClosed();
+    } finally {
+      _wsConnecting = false;
+    }
+  }
+
+  // The socket reported a close/error: drop it and schedule a reconnect. The
+  // safety poll keeps messages flowing in the meantime.
+  void _onWsClosed() {
+    _wsSub?.cancel();
+    _wsSub = null;
+    _channel = null;
+    if (!mounted) return;
+    _scheduleReconnect();
+  }
+
+  void _scheduleReconnect() {
+    if (_reconnectTimer != null && _reconnectTimer!.isActive) return;
+    _reconnectAttempts++;
+    // Exponential backoff capped at 30s: 1, 2, 4, 8, 16, 30, 30, …
+    final secs = (1 << (_reconnectAttempts - 1)).clamp(1, 30);
+    _reconnectTimer = Timer(Duration(seconds: secs), () {
+      if (mounted && _channel == null) _connectWs();
+    });
+  }
+
+  // A message pushed over the socket (JSON for one message row). Append it if we
+  // don't already have it — the server also echoes our own sent messages, and
+  // the safety poll may fetch the same row, so we dedupe by id.
+  void _onWsData(dynamic data) {
+    if (!mounted) return;
+    Map<String, dynamic> m;
+    try {
+      m = jsonDecode(data as String) as Map<String, dynamic>;
+    } catch (_) {
+      return;
+    }
+    final id = m['id'] as int?;
+    if (id == null || _messages.any((e) => e['id'] == id)) return;
+    setState(() => _messages.add(m));
+    _scrollToBottom();
+    saveLastSeen(_conversationId!, id);
+  }
+
+  // Always-on backstop: a slow poll (every 5s) so no message is ever lost, even
+  // if the socket dies silently. The WebSocket handles instant delivery; this
+  // just guarantees eventual delivery. Much lighter than the old 2s poll.
+  void _startSafetyPoll() {
     _pollTimer?.cancel();
     _pollTimer =
-        Timer.periodic(const Duration(seconds: 2), (_) => _fetchNew());
+        Timer.periodic(const Duration(seconds: 5), (_) => _fetchNew());
   }
 
   Future<void> _open() async {
@@ -76,7 +158,8 @@ class _PartnerChatScreenState extends State<PartnerChatScreen> {
     await _fetchNew();
     if (!mounted) return;
     setState(() => _loading = false);
-    _startPolling();
+    _startSafetyPoll(); // always-on backstop
+    _connectWs(); // instant delivery on top
   }
 
   int get _lastId => _messages.isEmpty ? 0 : _messages.last['id'] as int;
