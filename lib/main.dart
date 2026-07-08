@@ -331,6 +331,60 @@ Future<Map<String, dynamic>> setPartnerViewPref(int pref) async {
   return res;
 }
 
+// --- group chat ------------------------------------------------------------
+// Mirrors the partner-chat helpers. A group has 3+ participants and at most one
+// robot; each member has a per-group share pref (1 card / 2 corrected /
+// 3 original), the same three modes as 1-on-1.
+
+// The live channel URL for one group, carrying the auth token.
+Future<Uri> groupSocketUri(int groupId) async {
+  final token = await _authToken();
+  return Uri.parse('$backendWsBase/ws/group/$groupId?token=$token');
+}
+
+Future<Map<String, dynamic>> createGroup({
+  required String name,
+  required List<int> memberUserIds,
+  required bool addRobot,
+  Map<String, dynamic>? robot,
+  required int sharePref,
+}) =>
+    _friendsPost('/group/create', {
+      'name': name,
+      'memberUserIds': memberUserIds,
+      'addRobot': addRobot,
+      'robot': ?robot,
+      'sharePref': sharePref,
+    });
+
+Future<Map<String, dynamic>> loadGroups() => _friendsPost('/group/list', {});
+
+Future<Map<String, dynamic>> groupInfo(int groupId) =>
+    _friendsPost('/group/info', {'groupId': groupId});
+
+Future<Map<String, dynamic>> fetchGroupMessages(int groupId, int sinceId) =>
+    _friendsPost('/group/messages/fetch',
+        {'groupId': groupId, 'sinceId': sinceId});
+
+Future<Map<String, dynamic>> sendGroupMessage(int groupId, String text) =>
+    _friendsPost('/group/message/send', {'groupId': groupId, 'text': text});
+
+Future<Map<String, dynamic>> setGroupSharePref(int groupId, int pref) =>
+    _friendsPost('/group/prefs', {'groupId': groupId, 'pref': pref});
+
+// The robot's persona for a new group, taken from the local pal profile so the
+// group robot matches the user's own Mia.
+Future<Map<String, dynamic>> loadRobotConfig() async {
+  final prefs = await SharedPreferences.getInstance();
+  return {
+    'name': prefs.getString('palName') ?? 'Mia',
+    'personality': prefs.getStringList('personality') ?? [],
+    'hobbies': prefs.getStringList('hobbies') ?? [],
+    'topics': prefs.getStringList('topics') ?? [],
+    'level': prefs.getString('level') ?? 'Intermediate',
+  };
+}
+
 // --- saved corrections storage (shared by the AI chat and partner chat) ----
 
 String correctionKey(String original, String correction) =>

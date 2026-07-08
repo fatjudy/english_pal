@@ -204,6 +204,25 @@ icons in the app bar.
   can't silently lose messages) and backoff reconnection. Verified in-app:
   instant (~0.7s) delivery, self-heal after a backend restart, reconnect.
 - **Phase 7 — Production niceties:** FCM push for new messages + Google Sign-In.
+- **Phase 8 — Group chat:** ✅ done. New `groups` / `group_members` / `group_messages`
+  tables; a group has 3+ participants and **at most one AI robot**. Endpoints
+  `/group/create`, `/group/list`, `/group/info`, `/group/messages/fetch`,
+  `/group/message/send`, `/group/prefs`, and a live `@app.websocket("/ws/group/{id}")`
+  (separate `group_manager`). Decisions (chosen with the user):
+  - **Robot replies only when mentioned by name** (`_mentions_robot`, whole-word,
+    case-insensitive); `generate_group_reply` builds a short in-character reply
+    from the last ~10 messages. The robot's persona is snapshotted onto the group
+    as JSON (from the creator's local pal profile).
+  - **Share preference is per-group** (`group_members.share_pref`), snapshotted per
+    message — same 3 modes as 1-on-1, and the "✓ Looks good!" note follows the
+    card's sharing rule. Server reuses `_view_message` to shape per viewer.
+  - **Every human message is coached** (one `generate_correction` call).
+  App: Groups tab lists groups (+ to create); `create_group_screen.dart` (name,
+  friend multi-select, add-robot toggle, per-group share mode, 3-participant
+  guard); `group_chat_screen.dart` (named bubbles, robot label, cards/looks-good
+  per shaping, WebSocket + 5s safety poll) with a group-settings screen to change
+  your own share mode + see members. Verified in-app: robot replied on mention
+  and addressed the sender by name; own correction card shown.
 
 ---
 

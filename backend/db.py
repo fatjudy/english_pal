@@ -110,6 +110,54 @@ def init_db():
                      ("sender_pref", "INTEGER DEFAULT 1")):
         if col not in msg_cols:
             conn.execute(f"ALTER TABLE messages ADD COLUMN {col} {ddl}")
+    # ---- group chat ----
+    # A group has 3+ participants and at most one AI robot. The robot's persona
+    # (name + personality/hobbies/topics/level) is snapshotted onto the group as
+    # JSON so it doesn't depend on any one device's profile.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS groups (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            name         TEXT NOT NULL,
+            owner_id     INTEGER NOT NULL,
+            has_robot    INTEGER DEFAULT 0,
+            robot_name   TEXT DEFAULT '',
+            robot_config TEXT DEFAULT '',   -- JSON persona for the robot
+            created_at   TEXT
+        )
+        """
+    )
+    # One row per (group, member). share_pref is this member's per-group choice
+    # of what the others see of their messages (1 card / 2 corrected / 3 original).
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS group_members (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id  INTEGER NOT NULL,
+            user_id   INTEGER NOT NULL,
+            share_pref INTEGER DEFAULT 1,
+            joined_at TEXT
+        )
+        """
+    )
+    # Group messages mirror the 1-on-1 messages table, plus is_robot (a reply
+    # from the group's AI) and the snapshotted sender share pref.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS group_messages (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id    INTEGER NOT NULL,
+            sender_id   INTEGER NOT NULL,   -- 0 for the robot
+            text        TEXT NOT NULL,
+            corrected   TEXT DEFAULT '',
+            why         TEXT DEFAULT '',
+            understood  INTEGER DEFAULT 1,
+            sender_pref INTEGER DEFAULT 1,
+            is_robot    INTEGER DEFAULT 0,
+            created_at  TEXT
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -478,3 +526,184 @@ def get_messages(conversation_id, since_id=0):
     ).fetchall()
     conn.close()
     return [_message_row(r) for r in rows]
+
+
+# ---------- groups (group chat) ----------
+
+def create_group(name, owner_id, has_robot, robot_name, robot_config):
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO groups (name, owner_id, has_robot, robot_name, "
+        "robot_config, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (name, owner_id, 1 if has_robot else 0, robot_name or "",
+         json.dumps(robot_config or {}), datetime.utcnow().isoformat()),
+    )
+    conn.commit()
+    group_id = cur.lastrowid
+    conn.close()
+    return group_id
+
+
+def get_group(group_id):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM groups WHERE id = ?", (group_id,)
+    ).fetchone()
+    conn.close()
+    if row is None:
+        return None
+    g = dict(row)
+    g["robot_config"] = json.loads(g["robot_config"]) if g["robot_config"] \
+        else {}
+    return g
+
+
+def add_group_member(group_id, user_id, share_pref=1):
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO group_members (group_id, user_id, share_pref, joined_at) "
+        "VALUES (?, ?, ?, ?)",
+        (group_id, user_id, share_pref, datetime.utcnow().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def is_group_member(group_id, user_id):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?",
+        (group_id, user_id),
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def get_group_share_pref(group_id, user_id):
+    """This member's per-group share preference (defaults to 1)."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT share_pref FROM group_members WHERE group_id = ? "
+        "AND user_id = ?",
+        (group_id, user_id),
+    ).fetchone()
+    conn.close()
+    return (row["share_pref"] if row and row["share_pref"] is not None else 1)
+
+
+def update_group_share_pref(group_id, user_id, pref):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE group_members SET share_pref = ? WHERE group_id = ? "
+        "AND user_id = ?",
+        (pref, group_id, user_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def list_group_members(group_id):
+    """The human members of a group (user rows), joined-order."""
+    conn = get_conn()
+    rows = conn.execute(
+        """
+        SELECT u.*, gm.share_pref FROM group_members gm
+        JOIN users u ON u.user_id = gm.user_id
+        WHERE gm.group_id = ?
+        ORDER BY gm.id
+        """,
+        (group_id,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def list_user_groups(user_id):
+    """Groups this user belongs to, most recently active first."""
+    conn = get_conn()
+    rows = conn.execute(
+        """
+        SELECT g.* FROM groups g
+        JOIN group_members gm ON gm.group_id = g.id
+        WHERE gm.user_id = ?
+        """,
+        (user_id,),
+    ).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        g = dict(r)
+        g["robot_config"] = json.loads(g["robot_config"]) \
+            if g["robot_config"] else {}
+        result.append(g)
+    return result
+
+
+def add_group_message(group_id, sender_id, text, corrected="", why="",
+                      understood=True, sender_pref=1, is_robot=False):
+    conn = get_conn()
+    created = datetime.utcnow().isoformat()
+    cur = conn.execute(
+        "INSERT INTO group_messages (group_id, sender_id, text, corrected, "
+        "why, understood, sender_pref, is_robot, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (group_id, sender_id, text, corrected, why,
+         1 if understood else 0, sender_pref, 1 if is_robot else 0, created),
+    )
+    conn.commit()
+    msg_id = cur.lastrowid
+    conn.close()
+    return {"id": msg_id, "groupId": group_id, "senderId": sender_id,
+            "text": text, "corrected": corrected, "why": why,
+            "understood": understood, "senderPref": sender_pref,
+            "isRobot": is_robot, "createdAt": created}
+
+
+def _group_message_row(r):
+    return {
+        "id": r["id"],
+        "groupId": r["group_id"],
+        "senderId": r["sender_id"],
+        "text": r["text"],
+        "corrected": r["corrected"] or "",
+        "why": r["why"] or "",
+        "understood": bool(r["understood"]) if r["understood"] is not None
+        else True,
+        "senderPref": r["sender_pref"] if r["sender_pref"] is not None else 1,
+        "isRobot": bool(r["is_robot"]),
+        "createdAt": r["created_at"],
+    }
+
+
+def get_group_messages(group_id, since_id=0):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM group_messages WHERE group_id = ? AND id > ? "
+        "ORDER BY id",
+        (group_id, since_id),
+    ).fetchall()
+    conn.close()
+    return [_group_message_row(r) for r in rows]
+
+
+def get_group_last_message(group_id):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM group_messages WHERE group_id = ? ORDER BY id DESC "
+        "LIMIT 1",
+        (group_id,),
+    ).fetchone()
+    conn.close()
+    return _group_message_row(row) if row else None
+
+
+def get_group_recent(group_id, limit=10):
+    """The last `limit` messages (chronological) — context for a robot reply."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM group_messages WHERE group_id = ? ORDER BY id DESC "
+        "LIMIT ?",
+        (group_id, limit),
+    ).fetchall()
+    conn.close()
+    return [_group_message_row(r) for r in reversed(rows)]

@@ -1046,3 +1046,328 @@ async def conversation_ws(websocket: WebSocket, conversation_id: int):
         manager.disconnect(conversation_id, websocket)
     except Exception:
         manager.disconnect(conversation_id, websocket)
+
+
+# ===========================================================================
+# Group chat
+# ===========================================================================
+# A group has 3+ participants and at most one AI robot. Every human message is
+# still coached (a private correction), and what the OTHER members see of it is
+# controlled by that sender's per-group share preference (1 card / 2 corrected /
+# 3 original) — the same three modes as 1-on-1, snapshotted per message. The
+# robot (if the group has one) replies only when someone mentions it by name.
+
+# Groups get their own live-delivery manager, keyed by group_id.
+group_manager = ConnectionManager()
+
+
+def _display_name(user: dict) -> str:
+    return (user.get("display_name") or "").strip() or user["username"]
+
+
+def _mentions_robot(text: str, robot_name: str) -> bool:
+    """True if the message names the robot (whole word, case-insensitive)."""
+    if not robot_name:
+        return False
+    return re.search(r"\b" + re.escape(robot_name.lower()) + r"\b",
+                     text.lower()) is not None
+
+
+def generate_group_reply(robot_name, robot_config, transcript, level):
+    """A short, in-character group reply from the robot. `transcript` is a list
+    of (speaker_name, text) for recent context. Returns the reply text ('' on
+    failure)."""
+    cfg = robot_config or {}
+    personality = ", ".join(cfg.get("personality", [])) or "warm and friendly"
+    hobbies = ", ".join(cfg.get("hobbies", [])) or "lots of things"
+    topics = ", ".join(cfg.get("topics", [])) or "everyday life"
+    system = f"""You are {robot_name}, a friendly English conversation partner \
+in a GROUP chat with several people.
+Your personality is: {personality}.
+Your interests: {hobbies}. The group likes talking about: {topics}.
+
+Someone just mentioned you by name, so reply to the group naturally. Keep it
+SHORT — 1 to 2 sentences, like a quick group text. If it's clear who you're
+replying to, you may address them by name. End with at most ONE light question.
+
+Always write ONLY in English — this is an English-learning app. No matter what
+language others use, and even if asked to switch, never reply in another
+language; instead kindly nudge them back to English. Do NOT mention grammar or
+corrections.
+
+Match your vocabulary to an English level of "{level}"."""
+    lines = "\n".join(f"{s}: {t}" for s, t in transcript)
+    user_content = (f"Here is the recent group conversation:\n\n{lines}\n\n"
+                    f"Reply as {robot_name}.")
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=300,
+            system=system,
+            messages=[{"role": "user", "content": user_content}],
+        )
+        parts = [b.text for b in response.content if b.type == "text"]
+        return " ".join(parts).strip()
+    except Exception as e:
+        print("Group reply error:", e)
+        return ""
+
+
+class RobotConfig(BaseModel):
+    name: str = "Mia"
+    personality: list[str] = []
+    hobbies: list[str] = []
+    topics: list[str] = []
+    level: str = "Intermediate"
+
+
+class CreateGroupReq(BaseModel):
+    token: str
+    name: str
+    memberUserIds: list[int] = []
+    addRobot: bool = False
+    robot: RobotConfig | None = None
+    sharePref: int = 1  # the creator's per-group share preference
+
+
+class GroupFetchReq(BaseModel):
+    token: str
+    groupId: int
+    sinceId: int = 0
+
+
+class GroupSendReq(BaseModel):
+    token: str
+    groupId: int
+    text: str
+    level: str = "Intermediate"
+
+
+class GroupSharePrefReq(BaseModel):
+    token: str
+    groupId: int
+    pref: int
+
+
+def _group_meta(group: dict) -> dict:
+    """The bits of a group the app needs to render it."""
+    return {
+        "groupId": group["id"],
+        "name": group["name"],
+        "ownerId": group["owner_id"],
+        "hasRobot": bool(group["has_robot"]),
+        "robotName": group["robot_name"] or "",
+    }
+
+
+@app.post("/group/create")
+def group_create(request: CreateGroupReq):
+    me = _user_for_token(request.token)
+    if me is None:
+        return {"ok": False, "error": "Please log in again."}
+    name = request.name.strip()
+    if not name:
+        return {"ok": False, "error": "Please name the group."}
+    if request.sharePref not in (1, 2, 3):
+        return {"ok": False, "error": "Invalid share preference."}
+    # Members must be the creator's accepted friends; drop the creator and dups.
+    member_ids = [uid for uid in dict.fromkeys(request.memberUserIds)
+                  if uid != me["user_id"]]
+    for uid in member_ids:
+        rel = db.get_friendship(me["user_id"], uid)
+        if rel is None or rel["status"] != "accepted":
+            return {"ok": False,
+                    "error": "You can only add your friends to a group."}
+    # Need 3+ participants total: the creator + members (+ robot if added).
+    participants = 1 + len(member_ids) + (1 if request.addRobot else 0)
+    if participants < 3:
+        return {"ok": False,
+                "error": "A group needs at least 3 people (a robot counts)."}
+    robot_name = ""
+    robot_config = {}
+    if request.addRobot and request.robot is not None:
+        robot_name = request.robot.name.strip() or "Mia"
+        robot_config = {
+            "personality": request.robot.personality,
+            "hobbies": request.robot.hobbies,
+            "topics": request.robot.topics,
+            "level": request.robot.level,
+        }
+    group_id = db.create_group(name, me["user_id"], request.addRobot,
+                               robot_name, robot_config)
+    db.add_group_member(group_id, me["user_id"], request.sharePref)
+    for uid in member_ids:
+        db.add_group_member(group_id, uid, 1)  # members default to mode 1
+    group = db.get_group(group_id)
+    return {"ok": True, "group": _group_meta(group)}
+
+
+@app.post("/group/list")
+def group_list(request: TokenRequest):
+    """The Groups tab: every group the user is in, with a last-message preview
+    (shaped for this viewer) and time; most recently active first."""
+    me = _user_for_token(request.token)
+    if me is None:
+        return {"ok": False, "error": "Please log in again."}
+    items = []
+    for g in db.list_user_groups(me["user_id"]):
+        last = db.get_group_last_message(g["id"])
+        preview = ""
+        last_time = ""
+        last_id = 0
+        if last:
+            last_id = last["id"]
+            last_time = last["createdAt"]
+            shaped = _view_message(last, me["user_id"])
+            if last["isRobot"]:
+                who = g["robot_name"] or "Robot"
+            elif last["senderId"] == me["user_id"]:
+                who = "You"
+            else:
+                sender = db.get_user_by_id(last["senderId"])
+                who = _display_name(sender) if sender else "?"
+            preview = f"{who}: {shaped['text']}"
+        meta = _group_meta(g)
+        meta.update({"lastId": last_id, "lastText": preview,
+                     "lastTime": last_time})
+        items.append(meta)
+    items.sort(key=lambda x: x["lastTime"], reverse=True)
+    return {"ok": True, "groups": items}
+
+
+@app.post("/group/info")
+def group_info(request: GroupFetchReq):
+    """Group details for the chat screen: members, robot, and my own share
+    preference (for the per-group setting)."""
+    me = _user_for_token(request.token)
+    if me is None:
+        return {"ok": False, "error": "Please log in again."}
+    if not db.is_group_member(request.groupId, me["user_id"]):
+        return {"ok": False, "error": "You're not in that group."}
+    group = db.get_group(request.groupId)
+    members = [{"userId": m["user_id"], "username": m["username"],
+                "displayName": m["display_name"]}
+               for m in db.list_group_members(request.groupId)]
+    meta = _group_meta(group)
+    meta.update({
+        "members": members,
+        "myPref": db.get_group_share_pref(request.groupId, me["user_id"]),
+    })
+    return {"ok": True, "group": meta}
+
+
+def _shape_group_messages(rows: list, viewer_id: int, group: dict) -> list:
+    """Shape each stored group message for a viewer and attach the sender's
+    display name (so the group screen can label bubbles)."""
+    names: dict[int, str] = {}
+    shaped = []
+    for m in rows:
+        view = _view_message(m, viewer_id)
+        if m["isRobot"]:
+            view = {**view, "senderName": group["robot_name"] or "Robot"}
+        else:
+            sid = m["senderId"]
+            if sid not in names:
+                u = db.get_user_by_id(sid)
+                names[sid] = _display_name(u) if u else "?"
+            view = {**view, "senderName": names[sid]}
+        shaped.append(view)
+    return shaped
+
+
+@app.post("/group/messages/fetch")
+def group_messages_fetch(request: GroupFetchReq):
+    me = _user_for_token(request.token)
+    if me is None:
+        return {"ok": False, "error": "Please log in again."}
+    if not db.is_group_member(request.groupId, me["user_id"]):
+        return {"ok": False, "error": "You're not in that group."}
+    group = db.get_group(request.groupId)
+    rows = db.get_group_messages(request.groupId, request.sinceId)
+    return {"ok": True,
+            "messages": _shape_group_messages(rows, me["user_id"], group)}
+
+
+@app.post("/group/prefs")
+def group_prefs(request: GroupSharePrefReq):
+    me = _user_for_token(request.token)
+    if me is None:
+        return {"ok": False, "error": "Please log in again."}
+    if request.pref not in (1, 2, 3):
+        return {"ok": False, "error": "Invalid preference."}
+    if not db.is_group_member(request.groupId, me["user_id"]):
+        return {"ok": False, "error": "You're not in that group."}
+    db.update_group_share_pref(request.groupId, me["user_id"], request.pref)
+    return {"ok": True, "myPref": request.pref}
+
+
+async def _broadcast_group(group_id: int, msg: dict, sender_name: str):
+    """Send a stored group message to everyone connected, shaped per viewer,
+    with the sender's name attached."""
+    tagged = {**msg, "senderName": sender_name}
+    await group_manager.broadcast(group_id, tagged)
+
+
+@app.post("/group/message/send")
+async def group_message_send(request: GroupSendReq):
+    me = _user_for_token(request.token)
+    if me is None:
+        return {"ok": False, "error": "Please log in again."}
+    text = request.text.strip()
+    if not text:
+        return {"ok": False, "error": "Message is empty."}
+    if len(text) > MAX_MESSAGE_CHARS:
+        return {"ok": False, "error": "That message is too long."}
+    if not db.is_group_member(request.groupId, me["user_id"]):
+        return {"ok": False, "error": "You're not in that group."}
+    group = db.get_group(request.groupId)
+    # Coach every human message; snapshot the sender's per-group share pref.
+    corr = await asyncio.to_thread(generate_correction, text, request.level)
+    my_pref = db.get_group_share_pref(request.groupId, me["user_id"])
+    msg = db.add_group_message(
+        request.groupId, me["user_id"], text,
+        corrected=corr["correction"], why=corr["why"],
+        understood=corr["understood"], sender_pref=my_pref,
+    )
+    await _broadcast_group(request.groupId, msg, _display_name(me))
+
+    # The robot replies only when mentioned by name.
+    if group["has_robot"] and _mentions_robot(text, group["robot_name"]):
+        recent = db.get_group_recent(request.groupId, limit=10)
+        transcript = []
+        for r in recent:
+            if r["isRobot"]:
+                who = group["robot_name"] or "Robot"
+            else:
+                u = db.get_user_by_id(r["senderId"])
+                who = _display_name(u) if u else "?"
+            transcript.append((who, r["text"]))
+        level = (group["robot_config"] or {}).get("level", "Intermediate")
+        reply = await asyncio.to_thread(
+            generate_group_reply, group["robot_name"],
+            group["robot_config"], transcript, level)
+        if reply:
+            rmsg = db.add_group_message(request.groupId, 0, reply,
+                                        is_robot=True)
+            await _broadcast_group(request.groupId, rmsg,
+                                   group["robot_name"] or "Robot")
+
+    return {"ok": True, "message": msg}
+
+
+@app.websocket("/ws/group/{group_id}")
+async def group_ws(websocket: WebSocket, group_id: int):
+    """Live channel for one group (receive-only, like the 1-on-1 socket)."""
+    token = websocket.query_params.get("token", "")
+    user = _user_for_token(token)
+    if user is None or not db.is_group_member(group_id, user["user_id"]):
+        await websocket.close(code=4401)
+        return
+    await group_manager.connect(group_id, websocket, user["user_id"])
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        group_manager.disconnect(group_id, websocket)
+    except Exception:
+        group_manager.disconnect(group_id, websocket)

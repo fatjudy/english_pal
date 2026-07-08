@@ -3,6 +3,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'main.dart';
 import 'friends_screen.dart';
 import 'partner_chat_screen.dart';
+import 'group_chat_screen.dart';
+import 'create_group_screen.dart';
 
 // ---------------------------------------------------------------------------
 // The app's home hub. A bottom bar splits it into four tabs:
@@ -23,37 +25,57 @@ class ChatsListScreen extends StatefulWidget {
 class _ChatsListScreenState extends State<ChatsListScreen> {
   int _tab = 0;
 
-  // A key so the shell's "add friend" app-bar action can refresh the Friends
-  // tab after a friend is added.
+  // Keys so the shell's app-bar actions can refresh the relevant tab after
+  // adding a friend / creating a group.
   final _friendsKey = GlobalKey<_FriendsTabState>();
+  final _groupsKey = GlobalKey<_GroupsTabState>();
 
   static const _titles = ['AI Bots', 'Friends', 'Groups', 'Settings'];
+
+  // App-bar actions depend on the current tab.
+  List<Widget>? _actions() {
+    if (_tab == 1) {
+      return [
+        IconButton(
+          icon: const Icon(Icons.person_add_alt),
+          tooltip: 'Add friend',
+          onPressed: () async {
+            await Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const FriendsScreen()));
+            _friendsKey.currentState?.reload();
+          },
+        ),
+      ];
+    }
+    if (_tab == 2) {
+      return [
+        IconButton(
+          icon: const Icon(Icons.group_add),
+          tooltip: 'New group',
+          onPressed: () async {
+            await Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const CreateGroupScreen()));
+            _groupsKey.currentState?.reload();
+          },
+        ),
+      ];
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(_titles[_tab]),
-        actions: _tab == 1
-            ? [
-                IconButton(
-                  icon: const Icon(Icons.person_add_alt),
-                  tooltip: 'Add friend',
-                  onPressed: () async {
-                    await Navigator.push(context,
-                        MaterialPageRoute(builder: (_) => const FriendsScreen()));
-                    _friendsKey.currentState?.reload();
-                  },
-                ),
-              ]
-            : null,
+        actions: _actions(),
       ),
       body: IndexedStack(
         index: _tab,
         children: [
           const _AiBotsTab(),
           _FriendsTab(key: _friendsKey),
-          const _GroupsTab(),
+          _GroupsTab(key: _groupsKey),
           const SettingsBody(),
         ],
       ),
@@ -256,28 +278,81 @@ class _FriendsTabState extends State<_FriendsTab> {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 2 — group chats. Not built yet; friendly placeholder for now.
+// Tab 2 — group chats you belong to. The + in the app bar creates a new one.
 // ---------------------------------------------------------------------------
-class _GroupsTab extends StatelessWidget {
-  const _GroupsTab();
+class _GroupsTab extends StatefulWidget {
+  const _GroupsTab({super.key});
+
+  @override
+  State<_GroupsTab> createState() => _GroupsTabState();
+}
+
+class _GroupsTabState extends State<_GroupsTab> {
+  List<Map<String, dynamic>> _groups = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  // Public so the shell can refresh after a group is created.
+  void reload() => _load();
+
+  Future<void> _load() async {
+    final res = await loadGroups();
+    if (!mounted) return;
+    setState(() {
+      _groups = res['ok'] == true
+          ? List<Map<String, dynamic>>.from(res['groups'] ?? [])
+          : [];
+      _loading = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: Padding(
-        padding: EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.groups_outlined, size: 56, color: AppColors.tipText),
-            SizedBox(height: 12),
-            Text(
-              'Group chats are coming soon.',
-              style: TextStyle(color: AppColors.tipText),
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: _groups.isEmpty
+          ? ListView(
+              children: const [
+                Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text(
+                    'No groups yet. Tap the + above to start a group chat with '
+                    '3 or more people — a robot can join too.',
+                    style: TextStyle(color: AppColors.tipText),
+                  ),
+                ),
+              ],
+            )
+          : ListView(
+              children: _groups.map((g) {
+                final last = (g['lastText'] ?? '').toString();
+                return _chatTile(
+                  avatar: const CircleAvatar(
+                    radius: 24,
+                    backgroundColor: AppColors.navy,
+                    child: Icon(Icons.groups, color: Colors.white),
+                  ),
+                  title: (g['name'] ?? 'Group').toString(),
+                  subtitle: last.isEmpty ? 'Tap to start chatting' : last,
+                  time: relativeTime((g['lastTime'] ?? '') as String),
+                  onTap: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => GroupChatScreen(group: g),
+                      ),
+                    );
+                    _load(); // refresh preview on return
+                  },
+                );
+              }).toList(),
             ),
-          ],
-        ),
-      ),
     );
   }
 }
